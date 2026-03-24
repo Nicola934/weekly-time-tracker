@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -20,7 +20,7 @@ class BehaviorService:
             task_id=session.task_id,
             reason_category=payload.reason_category,
             custom_reason=payload.custom_reason,
-            captured_at=datetime.utcnow(),
+            captured_at=session.planned_end or datetime.now(UTC),
             time_lost_minutes=payload.time_lost_minutes,
         )
         db.add(habit)
