@@ -1,0 +1,32 @@
+[project]
+name = "weekly-execution-behavior-intelligence"
+version = "0.1.0"
+description = "Weekly Execution & Behavior Intelligence System backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "sqlmodel>=0.0.22",
+  "pydantic-settings>=2.6.0",
+  "python-dateutil>=2.9.0",
+  "openpyxl>=3.1.5",
+  "pyttsx3>=2.98"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "httpx>=0.28.0",
+  "ruff>=0.8.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
