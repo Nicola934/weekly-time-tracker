@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlmodel import Session, select
 
 from .models import SyncEvent
@@ -16,7 +14,7 @@ class SyncService:
         return event
 
     def pending_events(self, db: Session) -> list[SyncEvent]:
-        return list(db.exec(select(SyncEvent).where(SyncEvent.synced == False)).all())
+        return list(db.exec(select(SyncEvent).where(SyncEvent.synced.is_(False))).all())
 
     def mark_synced(self, db: Session, event_id: int) -> SyncEvent | None:
         event = db.get(SyncEvent, event_id)

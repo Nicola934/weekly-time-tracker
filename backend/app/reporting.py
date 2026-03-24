@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
-import json
 
 from openpyxl import Workbook
 from sqlmodel import Session, select
