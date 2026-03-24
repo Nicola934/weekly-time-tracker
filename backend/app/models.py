@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 
@@ -39,7 +39,7 @@ class TaskBase(SQLModel):
 
 class Task(TaskBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ScheduleBlockBase(SQLModel):
@@ -69,7 +69,7 @@ class SessionBase(SQLModel):
 
 class Session(SessionBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class MissedHabitBase(SQLModel):
@@ -77,7 +77,7 @@ class MissedHabitBase(SQLModel):
     task_id: int = Field(foreign_key="task.id")
     reason_category: MissedReasonCategory
     custom_reason: Optional[str] = None
-    captured_at: datetime = Field(default_factory=datetime.utcnow)
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     time_lost_minutes: int = 0
 
 
@@ -100,5 +100,5 @@ class SyncEvent(SQLModel, table=True):
     entity_type: str
     entity_id: int
     action: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     synced: bool = False
