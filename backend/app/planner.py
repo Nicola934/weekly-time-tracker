@@ -34,4 +34,56 @@ class PlannerService:
         return block
 
     def list_schedule(self, db: Session) -> list[ScheduleBlock]:
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs
+=======
+        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+>>>>>>> theirs

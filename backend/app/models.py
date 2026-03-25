@@ -101,4 +101,56 @@ class SyncEvent(SQLModel, table=True):
     entity_id: int
     action: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     synced: bool = False
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs
+=======
+    synced: bool = False
+>>>>>>> theirs

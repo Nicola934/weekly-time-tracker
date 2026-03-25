@@ -28,6 +28,19 @@ class ReportingService:
                 )
             ).all()
         )
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 
         tasks = {task.id: task.title for task in db.exec(select(Task)).all()}
 
@@ -43,6 +56,74 @@ class ReportingService:
 
         advisory = self.advisor.generate(db, period_start, period_end)
 
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+        tasks = {task.id: task.title for task in db.exec(select(Task)).all()}
+        task_hours: dict[str, float] = {}
+        for item in sessions:
+            label = tasks.get(item.task_id, f"Task {item.task_id}")
+            task_hours[label] = round(task_hours.get(label, 0) + (minutes_between(item.actual_start, item.actual_end) / 60), 2)
+        advisory = self.advisor.generate(db, period_start, period_end)
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
         return WeeklyReportResponse(
             period_start=period_start,
             period_end=period_end,
@@ -63,6 +144,19 @@ class ReportingService:
             f"Punctuality: {report.metrics.punctuality_rate}%",
             "Habit breakdown:",
         ]
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 
         lines.extend(
             [
@@ -71,17 +165,108 @@ class ReportingService:
             ]
         )
 
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
+=======
+        lines.extend([f"- {item.category}: {item.count} misses / {item.minutes_lost} minutes lost" for item in report.habits])
+>>>>>>> theirs
         return "\n".join(lines)
 
     def export_excel(self, report: WeeklyReportResponse) -> bytes:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Weekly Report"
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
         sheet.append(["Metric", "Value"])
         sheet.append(["Signal %", report.metrics.signal_percent])
         sheet.append(["Performance %", report.metrics.performance_percent])
         sheet.append(["Punctuality %", report.metrics.punctuality_rate])
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 
         sheet.append([])
         sheet.append(["Habit", "Misses", "Minutes Lost"])
@@ -93,3 +278,72 @@ class ReportingService:
         workbook.save(output)
 
         return output.getvalue()
+=======
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+        sheet.append([])
+        sheet.append(["Habit", "Misses", "Minutes Lost"])
+        for item in report.habits:
+            sheet.append([item.category, item.count, item.minutes_lost])
+        output = BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs

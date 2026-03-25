@@ -4,18 +4,122 @@
     "slug": "weekly-execution-intelligence",
     "version": "0.1.0",
     "orientation": "portrait",
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     "platforms": [
       "android",
       "web"
     ],
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
+=======
+    "platforms": ["android", "web"],
+>>>>>>> theirs
     "android": {
       "package": "com.openai.weeklyexecution"
     },
     "web": {
       "bundler": "metro"
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     },
     "plugins": [
       "expo-asset"
     ]
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
+=======
+    }
+>>>>>>> theirs
   }
 }

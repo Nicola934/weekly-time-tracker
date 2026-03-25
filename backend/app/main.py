@@ -4,7 +4,46 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 from fastapi.middleware.cors import CORSMiddleware
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from sqlmodel import Session
 
@@ -34,6 +73,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Weekly Execution & Behavior Intelligence System")
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +100,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
+=======
+>>>>>>> theirs
 planner = PlannerService()
 tracker = TrackerService()
 metrics = MetricsService()
@@ -120,10 +198,62 @@ def missed_session(payload: SessionMissedRequest, db: Session = Depends(get_sess
         session = db.get(WorkSession, payload.session_id)
         task = db.get(Task, session.task_id) if session else None
         sync_service.enqueue(db, "habit", item.id, "missed")
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
         return {
             "habit": item,
             "prompt": behavior.missed_session_prompt(session, task) if session else None,
         }
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
+=======
+        return {"habit": item, "prompt": behavior.missed_session_prompt(session, task) if session else None}
+>>>>>>> theirs
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -202,4 +332,56 @@ def update_notification_templates(payload: NotificationConfigUpdate, db: Session
 
 @app.get("/sync/pending")
 def get_pending_sync(db: Session = Depends(get_session)):
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
+<<<<<<< ours
     return sync_service.pending_events(db)
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
+=======
+    return sync_service.pending_events(db)
+>>>>>>> theirs
