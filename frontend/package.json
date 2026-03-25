@@ -2,83 +2,22 @@
   "name": "weekly-execution-frontend",
   "version": "0.2.0",
   "private": true,
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-=======
   "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
-=======
-  "type": "module",
->>>>>>> theirs
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "web": "expo start --web",
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "electron": "electron electron/main.cjs",
+    "desktop:dev": "set ELECTRON_START_URL=http://localhost:8081&& electron electron/main.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",
     "@react-native-async-storage/async-storage": "^2.0.0",
     "expo": "~52.0.11",
     "expo-asset": "~11.0.1",
+    "expo-av": "~15.0.2",
     "expo-notifications": "~0.29.14",
     "expo-speech": "~13.0.0",
     "react": "18.3.1",
@@ -88,94 +27,7 @@
   },
   "devDependencies": {
     "@types/react": "~18.3.12",
+    "electron": "^31.7.7",
     "typescript": "^5.6.3"
   }
 }
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-    "test": "node --test tests/*.test.js",
-    "electron": "electron electron/main.js",
-    "desktop:dev": "ELECTRON_START_URL=http://localhost:8081 electron electron/main.js"
-=======
-    "test": "node --test tests/*.test.js",
-    "electron": "electron electron/main.cjs",
-    "desktop:dev": "ELECTRON_START_URL=http://localhost:8081 electron electron/main.cjs"
->>>>>>> theirs
-=======
-    "test": "node --test tests/*.test.js",
-    "electron": "electron electron/main.cjs",
-    "desktop:dev": "ELECTRON_START_URL=http://localhost:8081 electron electron/main.cjs"
->>>>>>> theirs
-  },
-  "dependencies": {
-    "@react-native-async-storage/async-storage": "^2.0.0",
-    "expo": "~52.0.11",
-    "expo-notifications": "~0.29.14",
-    "expo-speech": "~13.0.0",
-    "react": "18.3.1",
-    "react-native": "0.76.3",
-    "react-native-web": "~0.19.13",
-    "expo-av": "~15.0.2"
-  },
-  "devDependencies": {
-    "typescript": "^5.6.3",
-    "@types/react": "~18.3.12",
-    "electron": "^31.7.7"
-  }
-}
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs

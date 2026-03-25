@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { ResizeMode, Video } from 'expo-av';
 
@@ -6,14 +6,25 @@ const STARTUP_VIDEO = require('../assets/lionyxe-startup.mp4');
 
 export default function StartupSplash({ onFinish }: { onFinish: () => void }) {
   const [fallbackTriggered, setFallbackTriggered] = useState(false);
+  const finishedRef = useRef(false);
+
+  const finishOnce = useCallback(() => {
+    if (finishedRef.current) {
+      return;
+    }
+
+    finishedRef.current = true;
+    onFinish();
+  }, [onFinish]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setFallbackTriggered(true);
-      onFinish();
+      finishOnce();
     }, 6500);
+
     return () => clearTimeout(timer);
-  }, [onFinish]);
+  }, [finishOnce]);
 
   return (
     <View style={styles.container}>
@@ -23,22 +34,24 @@ export default function StartupSplash({ onFinish }: { onFinish: () => void }) {
           style={styles.video}
           resizeMode={ResizeMode.COVER}
           shouldPlay
+          isMuted
           isLooping={false}
           onPlaybackStatusUpdate={(status) => {
             if (!status.isLoaded) {
               return;
             }
+
             if (status.didJustFinish) {
-              onFinish();
+              finishOnce();
             }
           }}
-          onError={() => onFinish()}
+          onError={finishOnce}
         />
       ) : null}
       <View style={styles.overlay}>
         <Text style={styles.brand}>LIONYX-E</Text>
         <ActivityIndicator color="#D6A436" />
-        <Text style={styles.loading}>Preparing execution workspace…</Text>
+        <Text style={styles.loading}>Preparing execution workspace...</Text>
       </View>
     </View>
   );
@@ -55,6 +68,11 @@ const styles = StyleSheet.create({
     paddingBottom: 72,
     gap: 12,
   },
-  brand: { color: '#D6A436', fontSize: 30, fontWeight: '700', letterSpacing: 2 },
+  brand: {
+    color: '#D6A436',
+    fontSize: 30,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
   loading: { color: '#F0F0F0', fontSize: 13 },
 });

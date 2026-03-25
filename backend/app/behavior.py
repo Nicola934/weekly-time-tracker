@@ -12,90 +12,14 @@ from .schemas import HabitPattern, SessionMissedRequest
 class BehaviorService:
     def record_missed_session(self, db: Session, payload: SessionMissedRequest) -> MissedHabit:
         session = db.get(WorkSession, payload.session_id)
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-
         if not session:
             raise ValueError("Session not found")
+        if session.status == SessionStatus.missed:
+            raise ValueError("Session is already marked missed")
+        if session.status != SessionStatus.planned:
+            raise ValueError("Only planned sessions can be marked missed")
 
         session.status = SessionStatus.missed
-
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
-=======
-        if not session:
-            raise ValueError("Session not found")
-        session.status = SessionStatus.missed
->>>>>>> theirs
         habit = MissedHabit(
             session_id=session.id,
             task_id=session.task_id,
@@ -104,90 +28,10 @@ class BehaviorService:
             captured_at=session.planned_end or datetime.now(UTC),
             time_lost_minutes=payload.time_lost_minutes,
         )
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
         db.add(habit)
         db.add(session)
         db.commit()
         db.refresh(habit)
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
         return habit
 
     def weekly_patterns(self, db: Session, period_start: datetime, period_end: datetime) -> list[HabitPattern]:
@@ -199,22 +43,8 @@ class BehaviorService:
                 )
             ).all()
         )
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
 
         grouped: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "minutes_lost": 0})
-
         for habit in habits:
             key = (
                 habit.custom_reason
@@ -238,88 +68,11 @@ class BehaviorService:
 
     def identify_behavior_risks(self, db: Session, period_start: datetime, period_end: datetime) -> list[str]:
         patterns = self.weekly_patterns(db, period_start, period_end)
-
-        risks: list[str] = []
-
-        if patterns:
-            top = patterns[0]
-            risks.append(f"You frequently miss sessions due to {top.category}.")
-
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-        grouped: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "minutes_lost": 0})
-        for habit in habits:
-            key = habit.custom_reason if habit.reason_category.value == "Custom" and habit.custom_reason else habit.reason_category.value
-            grouped[key]["count"] += 1
-            grouped[key]["minutes_lost"] += habit.time_lost_minutes
-        return [HabitPattern(category=category, count=data["count"], minutes_lost=data["minutes_lost"]) for category, data in sorted(grouped.items(), key=lambda item: (-item[1]["minutes_lost"], -item[1]["count"], item[0]))]
-
-    def identify_behavior_risks(self, db: Session, period_start: datetime, period_end: datetime) -> list[str]:
-        patterns = self.weekly_patterns(db, period_start, period_end)
         risks: list[str] = []
         if patterns:
             top = patterns[0]
             risks.append(f"You frequently miss sessions due to {top.category}.")
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+
         sessions = list(
             db.exec(
                 select(WorkSession).where(
@@ -329,97 +82,13 @@ class BehaviorService:
                 )
             ).all()
         )
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-
-        if sessions:
-            buckets: dict[int, int] = defaultdict(int)
-
-            for item in sessions:
-                buckets[item.planned_start.hour] += 1
-
-            top_hour = max(buckets.items(), key=lambda entry: entry[1])[0]
-            risks.append(f"Most missed sessions occur during the {top_hour:02d}:00 hour.")
-
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
         if sessions:
             buckets: dict[int, int] = defaultdict(int)
             for item in sessions:
                 buckets[item.planned_start.hour] += 1
             top_hour = max(buckets.items(), key=lambda entry: entry[1])[0]
             risks.append(f"Most missed sessions occur during the {top_hour:02d}:00 hour.")
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
+
         return risks
 
     def missed_session_prompt(self, session: WorkSession, task: Task | None) -> dict[str, str | int | None]:
@@ -427,56 +96,4 @@ class BehaviorService:
             "message": "What were you doing instead?",
             "session_id": session.id,
             "task_title": task.title if task else None,
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
         }
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs
-=======
-        }
->>>>>>> theirs

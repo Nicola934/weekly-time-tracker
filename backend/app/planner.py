@@ -16,6 +16,9 @@ class PlannerService:
         return list(db.exec(select(Task).order_by(Task.priority, Task.created_at)).all())
 
     def create_schedule_block(self, db: Session, payload: ScheduleCreate) -> ScheduleBlock:
+        if payload.end_time <= payload.start_time:
+            raise ValueError("Schedule end time must be after start time")
+
         block = ScheduleBlock.model_validate(payload)
         db.add(block)
         db.commit()
@@ -34,56 +37,4 @@ class PlannerService:
         return block
 
     def list_schedule(self, db: Session) -> list[ScheduleBlock]:
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
         return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
-=======
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
->>>>>>> theirs
