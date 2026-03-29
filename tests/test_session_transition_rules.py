@@ -11,9 +11,12 @@ from backend.app.models import (
     Session as WorkSession,
     SessionStatus,
     Task,
+    UserAccount,
 )
 from backend.app.schemas import SessionMissedRequest, SessionStartRequest
 from backend.app.tracker import TrackerService
+
+TEST_USER_ID = 1
 
 
 def _memory_db() -> Session:
@@ -28,11 +31,22 @@ def _create_task(db: Session) -> Task:
         objective="Finish the narrow fix pass",
         long_term_goal="Backend",
         priority=4,
+        user_id=TEST_USER_ID,
     )
     db.add(task)
     db.commit()
     db.refresh(task)
     return task
+
+
+def _test_user() -> UserAccount:
+    return UserAccount(
+        id=TEST_USER_ID,
+        name="Test User",
+        email="test@example.com",
+        password_hash="hash",
+        password_salt="salt",
+    )
 
 
 def test_start_session_allows_a_start_within_the_one_hour_prestart_window() -> None:
@@ -43,6 +57,7 @@ def test_start_session_allows_a_start_within_the_one_hour_prestart_window() -> N
             planned_start=datetime(2026, 3, 26, 10, 0, 0),
             planned_end=datetime(2026, 3, 26, 11, 0, 0),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
@@ -56,6 +71,7 @@ def test_start_session_allows_a_start_within_the_one_hour_prestart_window() -> N
                 actual_start=datetime(2026, 3, 26, 9, 15, 0),
                 timezone="Africa/Johannesburg",
             ),
+            TEST_USER_ID,
         )
 
         assert started.status == SessionStatus.active
@@ -71,6 +87,7 @@ def test_start_session_rejects_a_start_more_than_one_hour_early() -> None:
             planned_start=datetime(2026, 3, 26, 10, 0, 0),
             planned_end=datetime(2026, 3, 26, 11, 0, 0),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
@@ -85,6 +102,7 @@ def test_start_session_rejects_a_start_more_than_one_hour_early() -> None:
                     actual_start=datetime(2026, 3, 26, 8, 59, 0),
                     timezone="Africa/Johannesburg",
                 ),
+                TEST_USER_ID,
             )
 
 
@@ -98,6 +116,7 @@ def test_delete_session_allows_future_planned_and_rejects_active_sessions() -> N
             planned_start=now + timedelta(hours=2),
             planned_end=now + timedelta(hours=3),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         active_session = WorkSession(
             task_id=task.id,
@@ -105,6 +124,7 @@ def test_delete_session_allows_future_planned_and_rejects_active_sessions() -> N
             planned_end=now + timedelta(minutes=55),
             actual_start=now - timedelta(minutes=3),
             status=SessionStatus.active,
+            user_id=TEST_USER_ID,
         )
         db.add(future_session)
         db.add(active_session)
@@ -112,12 +132,12 @@ def test_delete_session_allows_future_planned_and_rejects_active_sessions() -> N
         db.refresh(future_session)
         db.refresh(active_session)
 
-        deleted = TrackerService().delete_session(db, future_session.id)
+        deleted = TrackerService().delete_session(db, future_session.id, TEST_USER_ID)
         assert deleted["session_id"] == future_session.id
         assert db.get(WorkSession, future_session.id) is None
 
         with pytest.raises(ValueError, match="Active sessions cannot be deleted"):
-            TrackerService().delete_session(db, active_session.id)
+            TrackerService().delete_session(db, active_session.id, TEST_USER_ID)
 
 
 def test_delete_session_legacy_alias_uses_the_same_delete_logic() -> None:
@@ -129,12 +149,13 @@ def test_delete_session_legacy_alias_uses_the_same_delete_logic() -> None:
             planned_start=now + timedelta(hours=2),
             planned_end=now + timedelta(hours=3),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
         db.refresh(session)
 
-        deleted = delete_session_legacy(session.id, db)
+        deleted = delete_session_legacy(session.id, db, _test_user())
 
         assert deleted["deleted"] is True
         assert deleted["session_id"] == session.id
@@ -150,12 +171,13 @@ def test_delete_session_endpoint_keeps_the_canonical_route_behavior() -> None:
             planned_start=now + timedelta(hours=4),
             planned_end=now + timedelta(hours=5),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
         db.refresh(session)
 
-        deleted = delete_session_endpoint(session.id, db)
+        deleted = delete_session_endpoint(session.id, db, _test_user())
 
         assert deleted["deleted"] is True
         assert deleted["session_id"] == session.id
@@ -171,6 +193,7 @@ def test_record_missed_session_allows_skip_inside_the_prestart_window() -> None:
             planned_start=now + timedelta(minutes=20),
             planned_end=now + timedelta(minutes=80),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
@@ -184,6 +207,7 @@ def test_record_missed_session_allows_skip_inside_the_prestart_window() -> None:
                 custom_reason="Skipped from notification",
                 time_lost_minutes=30,
             ),
+            TEST_USER_ID,
         )
 
         db.refresh(session)
@@ -201,6 +225,7 @@ def test_record_missed_session_rejects_skips_before_the_prestart_window() -> Non
             planned_start=now + timedelta(hours=2),
             planned_end=now + timedelta(hours=3),
             status=SessionStatus.planned,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
@@ -215,4 +240,5 @@ def test_record_missed_session_rejects_skips_before_the_prestart_window() -> Non
                     custom_reason="Skipped from notification",
                     time_lost_minutes=30,
                 ),
+                TEST_USER_ID,
             )

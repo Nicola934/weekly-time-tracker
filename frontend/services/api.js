@@ -13,9 +13,10 @@ const DEFAULT_GOAL_CONTEXT_SETTINGS = {
   updated_at: null,
 };
 const ENABLE_REMOTE_GOAL_CONTEXT_SETTINGS =
-  process.env.EXPO_PUBLIC_ENABLE_REMOTE_GOAL_CONTEXT_SETTINGS === 'true';
+  process.env.EXPO_PUBLIC_ENABLE_REMOTE_GOAL_CONTEXT_SETTINGS !== 'false';
 let apiInitLogged = false;
 const skippedGoalContextBaseUrls = new Set();
+let currentAuthToken = null;
 
 function normalizeBaseUrl(baseUrl) {
   const normalized = String(baseUrl ?? DEFAULT_API_BASE_URL).trim();
@@ -54,6 +55,39 @@ function ensureApiInitLogged(baseUrl) {
     baseUrl,
     source: DEFAULT_API_RUNTIME_CONFIG.source,
   });
+}
+
+function normalizeHeaders(existingHeaders) {
+  const headers = {};
+
+  if (existingHeaders instanceof Headers) {
+    for (const [key, value] of existingHeaders.entries()) {
+      headers[key] = value;
+    }
+  } else if (Array.isArray(existingHeaders)) {
+    for (const [key, value] of existingHeaders) {
+      headers[key] = value;
+    }
+  } else if (existingHeaders && typeof existingHeaders === 'object') {
+    Object.assign(headers, existingHeaders);
+  }
+
+  if (currentAuthToken) {
+    headers.Authorization = `Bearer ${currentAuthToken}`;
+  }
+
+  return headers;
+}
+
+function withAuthInit(init) {
+  if (!currentAuthToken) {
+    return init;
+  }
+
+  return {
+    ...(init || {}),
+    headers: normalizeHeaders(init?.headers),
+  };
 }
 
 function delay(ms) {
@@ -192,6 +226,15 @@ function describePayloadShape(payload) {
 
   const keys = Object.keys(payload).sort();
   return keys.length > 0 ? `object keys: ${keys.join(', ')}` : 'object with no keys';
+}
+
+export function setApiAuthToken(token) {
+  const normalizedToken = String(token || '').trim();
+  currentAuthToken = normalizedToken || null;
+}
+
+export function clearApiAuthToken() {
+  currentAuthToken = null;
 }
 
 function extractCreatedTaskId(response) {
@@ -411,7 +454,10 @@ async function requestJson(
       totalAttempts,
     });
 
-    const { requestInit, cleanup } = createRequestInit(init, timeoutMs);
+    const { requestInit, cleanup } = createRequestInit(
+      withAuthInit(init),
+      timeoutMs,
+    );
 
     try {
       const response = await fetch(url, requestInit);
@@ -481,6 +527,37 @@ export async function fetchHealth(baseUrl = DEFAULT_API_BASE_URL) {
   });
 }
 
+export async function registerUser(payload, baseUrl = DEFAULT_API_BASE_URL) {
+  return requestJson('/auth/register', {
+    baseUrl,
+    message: 'Failed to register account',
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  });
+}
+
+export async function loginUser(payload, baseUrl = DEFAULT_API_BASE_URL) {
+  return requestJson('/auth/login', {
+    baseUrl,
+    message: 'Failed to sign in',
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  });
+}
+
+export async function fetchCurrentUser(baseUrl = DEFAULT_API_BASE_URL) {
+  return requestJson('/auth/me', {
+    baseUrl,
+    message: 'Failed to load account profile',
+  });
+}
+
 export async function fetchNotificationConfig(baseUrl = DEFAULT_API_BASE_URL) {
   return requestJson('/notifications/templates', {
     baseUrl,
@@ -536,7 +613,9 @@ export async function fetchGoalContextSettings(baseUrl = DEFAULT_API_BASE_URL) {
   });
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: normalizeHeaders(),
+    });
     const contentType = response.headers.get('content-type') || '';
     const responseText = await response.text().catch(() => '');
     const payload = parseResponsePayload(responseText, contentType);
@@ -620,7 +699,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
   const method = 'POST';
   const init = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   };
 
@@ -740,7 +819,7 @@ export async function createSchedule(payload, baseUrl = DEFAULT_API_BASE_URL) {
     message: 'Failed to create schedule block',
     init: {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
     },
   });
@@ -753,7 +832,7 @@ export async function startSession(payload, baseUrl = DEFAULT_API_BASE_URL) {
       message: 'Failed to start session',
       init: {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       },
     }),
@@ -767,7 +846,7 @@ export async function endSession(payload, baseUrl = DEFAULT_API_BASE_URL) {
       message: 'Failed to end session',
       init: {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       },
     }),
@@ -832,7 +911,7 @@ export async function updateSession(
       message: 'Failed to update session',
       init: {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       },
     }),
@@ -845,7 +924,7 @@ export async function markSessionMissed(payload, baseUrl = DEFAULT_API_BASE_URL)
     message: 'Failed to mark session missed',
     init: {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: normalizeHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
     },
   });

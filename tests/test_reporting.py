@@ -5,123 +5,22 @@ from sqlmodel import Session, SQLModel, create_engine
 from backend.app.metrics import MetricsService
 from backend.app.models import Session as WorkSession, SessionStatus, Task
 
+TEST_USER_ID = 1
+
 
 def test_metrics_service_computes_signal_performance_and_lateness() -> None:
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
-=======
-    engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
->>>>>>> theirs
     SQLModel.metadata.create_all(engine)
     now = datetime(2026, 3, 21, 12, 0, 0)
 
     with Session(engine) as db:
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
         task = Task(
             title="Execution",
             objective="Ship feature",
             long_term_goal="Grow platform",
             priority=4,
+            user_id=TEST_USER_ID,
         )
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
-=======
-        task = Task(title='Execution', objective='Ship feature', long_term_goal='Grow platform', priority=4)
->>>>>>> theirs
         db.add(task)
         db.commit()
         db.refresh(task)
@@ -134,63 +33,17 @@ def test_metrics_service_computes_signal_performance_and_lateness() -> None:
             actual_end=now - timedelta(hours=1),
             status=SessionStatus.completed,
             completion_percent=80,
+            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
 
-        metrics = MetricsService().compute_metrics(db, now - timedelta(days=1), now)
+        metrics = MetricsService().compute_metrics(
+            db,
+            now - timedelta(days=1),
+            now,
+            TEST_USER_ID,
+        )
         assert metrics.signal_percent == 83.33
-        assert metrics.performance_percent == 80.0
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
+        assert metrics.performance_percent == 46.67
         assert metrics.average_lateness_minutes == 10.0
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs
-=======
-        assert metrics.average_lateness_minutes == 10.0
->>>>>>> theirs

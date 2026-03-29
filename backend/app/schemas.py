@@ -23,6 +23,28 @@ class TaskCreate(BaseModel):
     estimated_hours: float = 0
 
 
+class UserRegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str = Field(min_length=8)
+
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+
+
+class AuthSessionResponse(BaseModel):
+    token: str
+    user: UserResponse
+
+
 class ScheduleCreate(BaseModel):
     task_id: int
     start_time: datetime

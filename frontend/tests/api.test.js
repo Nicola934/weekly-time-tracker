@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  clearApiAuthToken,
   createTask,
   deleteSession,
+  fetchCurrentUser,
   fetchGoalContextSettings,
+  setApiAuthToken,
 } from '../services/api.js';
 
 function createJsonResponse(payload, status = 200) {
@@ -120,19 +123,27 @@ test('createTask recovers from GET /tasks when POST /tasks body is empty', async
   }
 });
 
-test('fetchGoalContextSettings skips remote backend by default', async () => {
+test('fetchGoalContextSettings loads remote backend settings by default', async () => {
   const originalFetch = global.fetch;
 
   try {
-    global.fetch = async () => {
-      throw new Error('fetch should not be called');
-    };
+    global.fetch = async () =>
+      createJsonResponse({
+        category_goals: {
+          Focus: ['Protect deep work'],
+        },
+        categories: ['Focus'],
+        goals: ['Protect deep work'],
+        updated_at: null,
+      });
 
     const result = await fetchGoalContextSettings('https://weekly-time-tracker.onrender.com');
     assert.deepEqual(result, {
-      category_goals: {},
-      categories: [],
-      goals: [],
+      category_goals: {
+        Focus: ['Protect deep work'],
+      },
+      categories: ['Focus'],
+      goals: ['Protect deep work'],
       updated_at: null,
     });
   } finally {
@@ -181,6 +192,40 @@ test('deleteSession retries the legacy singular route after a generic 404', asyn
       'http://localhost:8000/session/31',
     ]);
   } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('fetchCurrentUser sends the bearer token after auth is configured', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+
+  try {
+    setApiAuthToken('token-123');
+    global.fetch = async (url, init) => {
+      calls.push({
+        url: String(url),
+        authorization:
+          init?.headers?.Authorization ?? init?.headers?.authorization ?? null,
+      });
+      return createJsonResponse({
+        id: 7,
+        name: 'Operator',
+        email: 'operator@example.com',
+      });
+    };
+
+    const profile = await fetchCurrentUser('https://weekly-time-tracker.onrender.com');
+
+    assert.equal(profile.id, 7);
+    assert.deepEqual(calls, [
+      {
+        url: 'https://weekly-time-tracker.onrender.com/auth/me',
+        authorization: 'Bearer token-123',
+      },
+    ]);
+  } finally {
+    clearApiAuthToken();
     global.fetch = originalFetch;
   }
 });

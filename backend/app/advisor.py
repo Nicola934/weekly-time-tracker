@@ -75,27 +75,30 @@ class AdvisorService:
         db: Session,
         period_start: datetime,
         period_end: datetime,
+        user_id: int,
     ) -> AdvisoryResponse:
-        metrics = self.metrics.compute_metrics(db, period_start, period_end)
+        metrics = self.metrics.compute_metrics(db, period_start, period_end, user_id)
         tasks = {
             task.id: task
-            for task in db.exec(select(Task)).all()
+            for task in db.exec(select(Task).where(Task.user_id == user_id)).all()
         }
         sessions = list(
             db.exec(
                 select(WorkSession).where(
+                    WorkSession.user_id == user_id,
                     WorkSession.planned_start >= period_start,
                     WorkSession.planned_end <= period_end,
                 )
             ).all()
         )
-        habits = self.behavior.weekly_patterns(db, period_start, period_end)
+        habits = self.behavior.weekly_patterns(db, period_start, period_end, user_id)
         current_memory = self._build_progress_memory_snapshot(sessions)
-        previous_memory = self._load_previous_memory(db, period_start)
+        previous_memory = self._load_previous_memory(db, period_start, user_id)
         if previous_memory is None:
             previous_sessions = list(
                 db.exec(
                     select(WorkSession).where(
+                        WorkSession.user_id == user_id,
                         WorkSession.planned_start >= period_start - timedelta(days=7),
                         WorkSession.planned_end <= period_end - timedelta(days=7),
                     )
@@ -614,10 +617,12 @@ class AdvisorService:
         self,
         db: Session,
         period_start: datetime,
+        user_id: int,
     ) -> dict[str, str | int | float | None] | None:
         previous_week_start = _start_of_week(period_start) - timedelta(days=7)
         memory = db.exec(
             select(WeeklyProgressMemory).where(
+                WeeklyProgressMemory.user_id == user_id,
                 WeeklyProgressMemory.week_start == previous_week_start
             )
         ).first()

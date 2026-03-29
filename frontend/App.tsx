@@ -19,10 +19,12 @@ import StartupSplash from './components/StartupSplash';
 import WeeklyPlanner from './components/WeeklyPlanner';
 import WeeklyReview from './components/WeeklyReview';
 import {
+  clearApiAuthToken,
   createSchedule,
   createTask,
   deleteSession as apiDeleteSession,
   endSession as apiEndSession,
+  fetchCurrentUser,
   fetchHabits,
   fetchHealth,
   fetchGoalContextSettings,
@@ -30,10 +32,18 @@ import {
   fetchSessions,
   fetchTasks,
   fetchWeeklyReport,
+  loginUser,
   markSessionMissed,
+  registerUser,
+  setApiAuthToken,
   startSession as apiStartSession,
   updateSession as apiUpdateSession,
 } from './services/api.js';
+import {
+  clearStoredAuthSession,
+  loadStoredAuthSession,
+  saveStoredAuthSession,
+} from './services/authSession.js';
 import {
   buildSessionCards,
   endSessionFlow,
@@ -52,6 +62,22 @@ import {
   resetLocalAppState,
 } from './services/notificationState.js';
 import * as notificationRuntime from './services/notificationRuntime.js';
+import {
+  applyOfflineSessionEnd,
+  applyOfflineSessionMissed,
+  applyOfflineSessionStart,
+  applyOfflineSessionUpdate,
+  buildOfflineSession,
+  buildOfflineTask,
+  createTemporaryId,
+  enqueueOfflineOperation,
+  flushOfflineQueue,
+  getPendingOperationCount,
+  loadOfflineSnapshot,
+  saveOfflineSnapshot,
+  upsertSessionCollection,
+  upsertTaskCollection,
+} from './services/offlineStore.js';
 
 const ENABLE_DEV_FALLBACK =
   process.env.EXPO_PUBLIC_ENABLE_DEV_FALLBACK === 'true';
@@ -522,6 +548,19 @@ function describeStartupFailure(label: string, error: unknown) {
   return `${label}: ${category} (${detail})`;
 }
 
+function isOfflineCapableError(error: unknown) {
+  const category = resolveApiErrorCategory(error);
+  return category === 'network error' || category === 'timeout';
+}
+
+function isUnauthorizedError(error: unknown) {
+  return (
+    error &&
+    typeof error === 'object' &&
+    Number((error as any).status) === 401
+  );
+}
+
 function buildDataUnavailableMessage(
   failures: Array<{ label: string; error: unknown }>,
 ) {
@@ -587,6 +626,14 @@ export default function App() {
 
 function AppShell() {
   const [showSplash, setShowSplash] = useState(() => shouldRenderStartupSplash());
+  const [authReady, setAuthReady] = useState(false);
+  const [authSession, setAuthSession] = useState<any | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [tasks, setTasks] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [config, setConfig] = useState<any>(fallbackConfig);
@@ -663,7 +710,7 @@ function AppShell() {
     stopWebTimers: () => undefined,
     stopLateLoop: () => undefined,
   });
-  const bootStartedRef = useRef(false);
+  const bootSessionKeyRef = useRef<string | null>(null);
   const notificationRuntimeEnabledRef = useRef(
     ENABLE_STARTUP_NOTIFICATION_RUNTIME,
   );
@@ -671,10 +718,63 @@ function AppShell() {
   const notificationActionSubscribedRef = useRef(false);
   const executionLoopInitLoggedRef = useRef(false);
   const plannerBootstrapLoggedRef = useRef(false);
+  const authUserId = normalizePositiveId(authSession?.user?.id);
 
   const updateNotificationDebug = (next: Record<string, unknown>) => {
     setNotificationDebug((current) => ({ ...current, ...next }));
   };
+
+  const resolveConfigWithDisplayName = useCallback(
+    (nextConfig: any) => ({
+      ...fallbackConfig,
+      ...(nextConfig || {}),
+      display_name:
+        String(authSession?.user?.name || '').trim() || fallbackConfig.display_name,
+    }),
+    [authSession?.user?.name],
+  );
+
+  const applySnapshotToState = useCallback(
+    (snapshot: any) => {
+      if (!snapshot || typeof snapshot !== 'object') {
+        return false;
+      }
+
+      const nextTasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
+      const nextSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+      const nextConfig = resolveConfigWithDisplayName(snapshot.config);
+      const nextGoalSettings = snapshot.goalSettings || fallbackGoalSettings;
+
+      setTasks(nextTasks);
+      setSessions(nextSessions);
+      setConfig(nextConfig);
+      setGoalSettings(nextGoalSettings);
+      latestReminderInputsRef.current = {
+        tasks: nextTasks,
+        sessions: nextSessions,
+        config: nextConfig,
+        categoryGoals: nextGoalSettings?.category_goals ?? {},
+      };
+      return (
+        nextTasks.length > 0 ||
+        nextSessions.length > 0 ||
+        Boolean(snapshot.config) ||
+        Boolean(snapshot.goalSettings)
+      );
+    },
+    [resolveConfigWithDisplayName],
+  );
+
+  const refreshPendingSyncState = useCallback(async () => {
+    if (authUserId === null) {
+      setPendingSyncCount(0);
+      return 0;
+    }
+
+    const count = await getPendingOperationCount(authUserId);
+    setPendingSyncCount(count);
+    return count;
+  }, [authUserId]);
 
   const stopReminderRuntime = () => {
     reminderRuntimeRef.current.stopWebTimers();
@@ -833,12 +933,68 @@ function AppShell() {
     promptForPermission?: boolean;
     enableNotifications?: boolean;
   } = {}) => {
+    if (authSession === null || authUserId === null) {
+      return;
+    }
+
     logAppInfo('API initialization', {
       promptForPermission,
       enableNotifications,
     });
 
+    const cachedSnapshot = await loadOfflineSnapshot(authUserId);
+    const hasCachedData =
+      (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
+      (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
+      Boolean(cachedSnapshot?.config) ||
+      Boolean(cachedSnapshot?.goalSettings);
+    const hasCurrentState =
+      tasks.length > 0 ||
+      sessions.length > 0 ||
+      Boolean(config) ||
+      Boolean(goalSettings);
+    const hasRecoverableLocalState = hasCachedData || hasCurrentState;
+
     try {
+      try {
+        const remoteUser = await fetchCurrentUser();
+        const remoteUserId = normalizePositiveId(remoteUser?.id);
+        if (remoteUserId !== null && remoteUserId !== authUserId) {
+          throw new Error('Signed-in account changed. Sign in again.');
+        }
+      } catch (nextError) {
+        if (isUnauthorizedError(nextError)) {
+          await clearStoredAuthSession();
+          clearApiAuthToken();
+          setAuthSession(null);
+          setPendingSyncCount(0);
+          setError('Session expired. Sign in again.');
+          throw nextError;
+        }
+
+        if (!isOfflineCapableError(nextError)) {
+          throw nextError;
+        }
+      }
+
+      try {
+        await flushOfflineQueue(authUserId, {
+          createTask,
+          createSchedule,
+          updateSession: apiUpdateSession,
+          deleteSession: apiDeleteSession,
+          startSession: apiStartSession,
+          endSession: apiEndSession,
+          markSessionMissed,
+        });
+      } catch (nextError) {
+        if (!isOfflineCapableError(nextError)) {
+          throw nextError;
+        }
+      }
+
+      await refreshPendingSyncState();
+
       const [
         healthResult,
         remoteTasksResult,
@@ -891,6 +1047,22 @@ function AppShell() {
           .join('; ')}.`;
 
         setBackendStatus('offline');
+        if (hasRecoverableLocalState) {
+          if (!hasCurrentState) {
+            applySnapshotToState(cachedSnapshot);
+          }
+          setError(
+            pendingSyncCount > 0
+              ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
+              : 'Backend offline. Using cached data.',
+          );
+          await armReminderRuntime({
+            promptForPermission,
+            forceEnable: enableNotifications,
+          });
+          return;
+        }
+
         stopReminderRuntime();
         setScheduleState('backend offline');
         setError(offlineMessage);
@@ -898,17 +1070,25 @@ function AppShell() {
       }
 
       const nextTasks =
-        remoteTasksResult.status === 'fulfilled' ? remoteTasksResult.value : tasks;
+        remoteTasksResult.status === 'fulfilled'
+          ? remoteTasksResult.value
+          : Array.isArray(cachedSnapshot?.tasks)
+            ? cachedSnapshot.tasks
+            : tasks;
       const nextSessions =
         remoteSessionsResult.status === 'fulfilled'
           ? remoteSessionsResult.value
-          : sessions;
+          : Array.isArray(cachedSnapshot?.sessions)
+            ? cachedSnapshot.sessions
+            : sessions;
       const nextConfig =
-        remoteConfigResult.status === 'fulfilled' ? remoteConfigResult.value : config;
+        remoteConfigResult.status === 'fulfilled'
+          ? resolveConfigWithDisplayName(remoteConfigResult.value)
+          : resolveConfigWithDisplayName(cachedSnapshot?.config || config);
       const nextGoalSettings =
         remoteGoalSettingsResult.status === 'fulfilled'
           ? remoteGoalSettingsResult.value ?? { category_goals: {} }
-          : goalSettings;
+          : cachedSnapshot?.goalSettings || goalSettings;
 
       latestReminderInputsRef.current = {
         tasks: nextTasks,
@@ -925,20 +1105,10 @@ function AppShell() {
         setBackendStatus('connected');
       }
 
-      if (remoteTasksResult.status === 'fulfilled') {
-        setTasks(remoteTasksResult.value);
-      }
-      if (remoteSessionsResult.status === 'fulfilled') {
-        setSessions(remoteSessionsResult.value);
-      }
-      if (remoteConfigResult.status === 'fulfilled') {
-        setConfig(remoteConfigResult.value);
-      }
-      if (remoteGoalSettingsResult.status === 'fulfilled') {
-        setGoalSettings(
-          remoteGoalSettingsResult.value ?? { category_goals: {} },
-        );
-      }
+      setTasks(nextTasks);
+      setSessions(nextSessions);
+      setConfig(nextConfig);
+      setGoalSettings(nextGoalSettings);
 
       const dataFailures: Array<{ label: string; error: unknown }> = [];
       if (remoteTasksResult.status === 'rejected') {
@@ -963,11 +1133,30 @@ function AppShell() {
         setError(null);
       }
 
+      await refreshPendingSyncState();
+
       await armReminderRuntime({
         promptForPermission,
         forceEnable: enableNotifications,
       });
     } catch (nextError) {
+      if (hasRecoverableLocalState && isOfflineCapableError(nextError)) {
+        if (!hasCurrentState) {
+          applySnapshotToState(cachedSnapshot);
+        }
+        setBackendStatus('offline');
+        setError(
+          pendingSyncCount > 0
+            ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
+            : 'Backend offline. Using cached data.',
+        );
+        await armReminderRuntime({
+          promptForPermission,
+          forceEnable: enableNotifications,
+        });
+        return;
+      }
+
       logAppError('API initialization failed', nextError);
       throw nextError;
     }
@@ -981,6 +1170,65 @@ function AppShell() {
       // Habit refresh is informational for the current flow.
     }
   };
+
+  useEffect(() => {
+    if (showSplash || authReady) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAuth = async () => {
+      try {
+        const storedSession = await loadStoredAuthSession();
+        if (cancelled) {
+          return;
+        }
+
+        if (storedSession?.token) {
+          setApiAuthToken(storedSession.token);
+        }
+
+        setAuthSession(storedSession);
+        setAuthName(String(storedSession?.user?.name || '').trim());
+        setAuthEmail(String(storedSession?.user?.email || '').trim());
+      } catch (nextError) {
+        logAppError('stored auth session load failed', nextError);
+      } finally {
+        if (!cancelled) {
+          setAuthReady(true);
+        }
+      }
+    };
+
+    void loadAuth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, showSplash]);
+
+  useEffect(() => {
+    if (!authReady || authUserId === null) {
+      return;
+    }
+
+    void refreshPendingSyncState();
+  }, [authReady, authUserId, refreshPendingSyncState]);
+
+  useEffect(() => {
+    if (!authReady || authUserId === null) {
+      return;
+    }
+
+    void saveOfflineSnapshot(authUserId, {
+      tasks,
+      sessions,
+      config,
+      goalSettings,
+      lastSyncedAt: new Date().toISOString(),
+    });
+  }, [authReady, authUserId, config, goalSettings, sessions, tasks]);
 
   useEffect(() => {
     loadingRef.current = loading;
@@ -1018,11 +1266,21 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (showSplash || bootStartedRef.current) {
+    if (showSplash || !authReady) {
       return;
     }
 
-    bootStartedRef.current = true;
+    if (!authSession) {
+      setLoading(false);
+      return;
+    }
+
+    const bootKey = `${authSession.user?.id}:${authSession.token}`;
+    if (bootSessionKeyRef.current === bootKey) {
+      return;
+    }
+
+    bootSessionKeyRef.current = bootKey;
     let cancelled = false;
     const bootTimer = setTimeout(() => {
       const boot = async () => {
@@ -1031,6 +1289,13 @@ function AppShell() {
           if (!executionLoopInitLoggedRef.current) {
             executionLoopInitLoggedRef.current = true;
             logAppInfo('executionLoop init');
+          }
+
+          if (authUserId !== null) {
+            const cachedSnapshot = await loadOfflineSnapshot(authUserId);
+            if (!cancelled) {
+              applySnapshotToState(cachedSnapshot);
+            }
           }
 
           await refreshAll({
@@ -1078,7 +1343,7 @@ function AppShell() {
       cancelled = true;
       clearTimeout(bootTimer);
     };
-  }, [showSplash]);
+  }, [applySnapshotToState, authReady, authSession, authUserId, showSplash]);
 
   useEffect(() => {
     const appStateSubscription = AppState.addEventListener('change', (next) => {
@@ -1220,15 +1485,6 @@ function AppShell() {
     weeklyReviewVisible,
   ]);
 
-  const api = {
-    startSession: apiStartSession,
-    endSession: apiEndSession,
-    markSessionMissed,
-    deleteSession: apiDeleteSession,
-    updateSession: apiUpdateSession,
-    refresh: refreshAll,
-  };
-
   const isUiLocked = pendingActionKey !== null;
   const actionKeyFor = (action: string, sessionId: number | string) =>
     `${action}:${sessionId}`;
@@ -1273,6 +1529,28 @@ function AppShell() {
     }
   };
 
+  const upsertLocalTask = (task: any) => {
+    setTasks((current) => {
+      const nextTasks = upsertTaskCollection(current, task);
+      latestReminderInputsRef.current = {
+        ...latestReminderInputsRef.current,
+        tasks: nextTasks,
+      };
+      return nextTasks;
+    });
+  };
+
+  const upsertLocalSession = (session: any) => {
+    setSessions((current) => {
+      const nextSessions = upsertSessionCollection(current, session);
+      latestReminderInputsRef.current = {
+        ...latestReminderInputsRef.current,
+        sessions: nextSessions,
+      };
+      return nextSessions;
+    });
+  };
+
   const removeSessionLocally = (sessionId: number | string) => {
     const normalizedSessionId = Number(sessionId);
     if (!Number.isFinite(normalizedSessionId)) {
@@ -1289,6 +1567,200 @@ function AppShell() {
       };
       return nextSessions;
     });
+  };
+
+  const createTaskWithOffline = async (taskPayload: any) => {
+    try {
+      const createdTask = await createTask(taskPayload);
+      upsertLocalTask(createdTask);
+      return createdTask;
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const offlineTask = buildOfflineTask(taskPayload);
+      upsertLocalTask(offlineTask);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'createTask',
+        localTaskId: offlineTask.id,
+        payload: taskPayload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Task saved locally and queued for sync.');
+      return offlineTask;
+    }
+  };
+
+  const createScheduleWithOffline = async (schedulePayload: any, selectedTask: any) => {
+    try {
+      return await createSchedule(schedulePayload);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const offlineSession = buildOfflineSession(schedulePayload, selectedTask);
+      upsertLocalSession(offlineSession);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'createSchedule',
+        localSessionId: offlineSession.id,
+        payload: schedulePayload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Session saved locally and queued for sync.');
+      return {
+        id: null,
+        session_id: offlineSession.id,
+      };
+    }
+  };
+
+  const startSessionWithOffline = async (payload: any) => {
+    try {
+      return await apiStartSession(payload);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const nextSession = applyOfflineSessionStart(
+        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
+        payload,
+      );
+      if (!nextSession) {
+        throw nextError;
+      }
+
+      upsertLocalSession(nextSession);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'startSession',
+        payload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Session start saved locally and queued for sync.');
+      return nextSession;
+    }
+  };
+
+  const endSessionWithOffline = async (payload: any) => {
+    try {
+      return await apiEndSession(payload);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const nextSession = applyOfflineSessionEnd(
+        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
+        payload,
+      );
+      if (!nextSession) {
+        throw nextError;
+      }
+
+      upsertLocalSession(nextSession);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'endSession',
+        payload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Session end saved locally and queued for sync.');
+      return nextSession;
+    }
+  };
+
+  const markSessionMissedWithOffline = async (payload: any) => {
+    try {
+      return await markSessionMissed(payload);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const nextSession = applyOfflineSessionMissed(
+        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
+      );
+      if (nextSession) {
+        upsertLocalSession(nextSession);
+      }
+      await enqueueOfflineOperation(authUserId, {
+        type: 'markSessionMissed',
+        payload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Missed session saved locally and queued for sync.');
+      return {
+        habit: {
+          session_id: payload?.session_id,
+          reason_category: payload?.reason_category,
+          custom_reason: payload?.custom_reason ?? null,
+          time_lost_minutes: payload?.time_lost_minutes ?? 0,
+        },
+      };
+    }
+  };
+
+  const deleteSessionWithOffline = async (sessionId: number | string) => {
+    try {
+      return await apiDeleteSession(sessionId);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      removeSessionLocally(sessionId);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'deleteSession',
+        sessionId,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Session delete queued for sync.');
+      return { deleted: true, session_id: sessionId };
+    }
+  };
+
+  const updateSessionWithOffline = async (sessionId: number | string, payload: any) => {
+    try {
+      return await apiUpdateSession(sessionId, payload);
+    } catch (nextError) {
+      if (!isOfflineCapableError(nextError) || authUserId === null) {
+        throw nextError;
+      }
+
+      const existingSession =
+        sessions.find((item: any) => Number(item.id) === Number(sessionId)) ?? null;
+      const nextSession = applyOfflineSessionUpdate(existingSession, payload);
+      if (!nextSession) {
+        throw nextError;
+      }
+
+      upsertLocalSession(nextSession);
+      await enqueueOfflineOperation(authUserId, {
+        type: 'updateSession',
+        sessionId,
+        payload,
+      });
+      await refreshPendingSyncState();
+      setBackendStatus('offline');
+      setError('Backend offline. Session update saved locally and queued for sync.');
+      return nextSession;
+    }
+  };
+
+  const api = {
+    startSession: startSessionWithOffline,
+    endSession: endSessionWithOffline,
+    markSessionMissed: markSessionMissedWithOffline,
+    deleteSession: deleteSessionWithOffline,
+    updateSession: updateSessionWithOffline,
+    refresh: refreshAll,
   };
 
   const openMissedPrompt = (sessionCard: any) => {
@@ -1439,7 +1911,7 @@ function AppShell() {
     let createdTask;
 
     try {
-      createdTask = await createTask(taskPayload);
+      createdTask = await createTaskWithOffline(taskPayload);
     } catch (nextError) {
       logAppError('planner task fallback create failed', nextError, {
         taskPayload,
@@ -1585,7 +2057,11 @@ function AppShell() {
         let followUpError: unknown = null;
         if (followUpPayload) {
           try {
-            await createSchedule(followUpPayload);
+            await createScheduleWithOffline(
+              followUpPayload,
+              tasks.find((task: any) => Number(task.id) === Number(endSessionTarget.taskId)) ??
+                null,
+            );
           } catch (nextError) {
             logAppError('follow-up schedule creation failed', nextError);
             followUpError = nextError;
@@ -1627,7 +2103,7 @@ function AppShell() {
     await runLockedAction(
       actionKeyFor('delete', sessionCard.id),
       async () => {
-        await apiDeleteSession(sessionCard.id);
+        await deleteSessionWithOffline(sessionCard.id);
         removeSessionLocally(sessionCard.id);
         await clearSessionReminders(sessionCard.id);
         await refreshAll();
@@ -1768,7 +2244,10 @@ function AppShell() {
         finalSchedulePayload: schedulePayload,
       });
 
-      await createSchedule(schedulePayload);
+      await createScheduleWithOffline(
+        schedulePayload,
+        resolvedSelectedTask,
+      );
       await refreshAll();
       setError(null);
     } catch (nextError) {
@@ -1827,7 +2306,7 @@ function AppShell() {
         finalSessionPayload: sessionPayload,
       });
 
-      await apiUpdateSession(sessionId, sessionPayload);
+      await updateSessionWithOffline(sessionId, sessionPayload);
       await refreshAll();
       setError(null);
     } catch (nextError) {
@@ -1861,6 +2340,75 @@ function AppShell() {
       promptForPermission: true,
       forceEnable: true,
     });
+  };
+
+  const completeAuthSession = async (nextSession: any) => {
+    setApiAuthToken(nextSession?.token);
+    await saveStoredAuthSession(nextSession);
+    bootSessionKeyRef.current = null;
+    setAuthSession(nextSession);
+    setAuthName(String(nextSession?.user?.name || '').trim());
+    setAuthEmail(String(nextSession?.user?.email || '').trim());
+    setAuthPassword('');
+    setPendingSyncCount(0);
+    setLoading(true);
+    setError(null);
+  };
+
+  const handleAuthSubmit = async () => {
+    setAuthSubmitting(true);
+    setError(null);
+
+    try {
+      const normalizedEmail = String(authEmail || '').trim();
+      const normalizedPassword = String(authPassword || '');
+      const normalizedName = String(authName || '').trim();
+
+      if (!normalizedEmail) {
+        throw new Error('Email is required.');
+      }
+      if (!normalizedPassword) {
+        throw new Error('Password is required.');
+      }
+      if (authMode === 'register' && !normalizedName) {
+        throw new Error('Name is required.');
+      }
+
+      const nextSession =
+        authMode === 'register'
+          ? await registerUser({
+              name: normalizedName,
+              email: normalizedEmail,
+              password: normalizedPassword,
+            })
+          : await loginUser({
+              email: normalizedEmail,
+              password: normalizedPassword,
+            });
+
+      await completeAuthSession(nextSession);
+    } catch (nextError) {
+      logAppError('auth submit failed', nextError, { mode: authMode });
+      setError(resolveErrorMessage(nextError, 'Failed to authenticate'));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await clearStoredAuthSession();
+    clearApiAuthToken();
+    bootSessionKeyRef.current = null;
+    stopReminderRuntime();
+    setAuthSession(null);
+    setTasks([]);
+    setSessions([]);
+    setConfig(fallbackConfig);
+    setGoalSettings(fallbackGoalSettings);
+    setPendingSyncCount(0);
+    setLoading(false);
+    setError(null);
+    setBackendStatus('checking');
   };
 
   const notificationStatusLabel = getNotificationStatusLabel(permissionState);
@@ -1912,6 +2460,110 @@ function AppShell() {
     return <StartupSplash onFinish={() => setShowSplash(false)} />;
   }
 
+  if (!authReady) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.page}>
+          <View style={styles.authCard}>
+            <ActivityIndicator color="#D6A436" />
+            <Text style={styles.panelTitle}>Restoring account</Text>
+            <Text style={styles.subtle}>
+              Loading the last signed-in session and local workspace.
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!authSession) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.page}>
+          <View style={styles.authCard}>
+            <Text style={styles.panelTitle}>
+              {authMode === 'register' ? 'Create Account' : 'Sign In'}
+            </Text>
+            <Text style={styles.subtle}>
+              Accounts keep each user&apos;s data separate across devices. Offline mode stays available after the first successful sign-in on this device.
+            </Text>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {authMode === 'register' ? (
+              <TextInput
+                style={styles.input}
+                placeholder="Name"
+                placeholderTextColor="#888C94"
+                autoCapitalize="words"
+                value={authName}
+                editable={!authSubmitting}
+                onChangeText={setAuthName}
+              />
+            ) : null}
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#888C94"
+              autoCapitalize="none"
+              keyboardType="email-address"
+              value={authEmail}
+              editable={!authSubmitting}
+              onChangeText={setAuthEmail}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#888C94"
+              secureTextEntry
+              value={authPassword}
+              editable={!authSubmitting}
+              onChangeText={setAuthPassword}
+            />
+            <View style={styles.actions}>
+              <Pressable
+                disabled={authSubmitting}
+                style={[
+                  styles.primaryButton,
+                  authSubmitting ? styles.buttonDisabled : null,
+                ]}
+                onPress={handleAuthSubmit}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {authSubmitting
+                    ? authMode === 'register'
+                      ? 'Creating...'
+                      : 'Signing in...'
+                    : authMode === 'register'
+                      ? 'Create Account'
+                      : 'Sign In'}
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={authSubmitting}
+                style={[
+                  styles.secondaryButton,
+                  authSubmitting ? styles.buttonDisabled : null,
+                ]}
+                onPress={() =>
+                  setAuthMode((current) =>
+                    current === 'register' ? 'login' : 'register',
+                  )
+                }
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {authMode === 'register'
+                    ? 'Use Existing Account'
+                    : 'Create New Account'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
@@ -1929,10 +2581,17 @@ function AppShell() {
             </Text>
           </View>
           <View style={styles.statusBlock}>
+            <Text style={styles.status}>
+              User: {authSession?.user?.name || authSession?.user?.email}
+            </Text>
             <Text style={styles.status}>Backend: {backendStatus}</Text>
+            <Text style={styles.status}>Pending sync: {pendingSyncCount}</Text>
             <Text style={styles.status}>
               Notifications: {notificationStatusLabel}
             </Text>
+            <Pressable style={styles.secondaryButton} onPress={handleLogout}>
+              <Text style={styles.secondaryButtonText}>Log Out</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -2451,6 +3110,14 @@ const styles = StyleSheet.create({
   fatalTitle: { color: '#F0F0F0', fontSize: 22, fontWeight: '700' },
   fatalBody: { color: '#888C94', fontSize: 14 },
   page: { padding: 16, gap: 14, backgroundColor: '#121212' },
+  authCard: {
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+    borderRadius: 16,
+    padding: 18,
+    gap: 12,
+  },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
