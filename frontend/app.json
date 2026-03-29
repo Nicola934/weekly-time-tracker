@@ -3,14 +3,39 @@
     "name": "Weekly Execution Intelligence",
     "slug": "weekly-execution-intelligence",
     "version": "0.1.0",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
-    "platforms": ["android", "web"],
+    "platforms": [
+      "android",
+      "web"
+    ],
     "android": {
-      "package": "com.openai.weeklyexecution"
+      "package": "com.openai.weeklyexecution",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#000000"
+      }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-asset"]
+    "plugins": [
+      "expo-asset",
+      "expo-notifications"
+    ],
+    "experiments": {
+      "baseUrl": "."
+    },
+    "extra": {
+      "eas": {
+        "projectId": "68bf2a33-495b-49cb-99ca-77ab5fb9ba11"
+      }
+    }
   }
 }

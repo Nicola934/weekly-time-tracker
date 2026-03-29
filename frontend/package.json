@@ -2,32 +2,74 @@
   "name": "weekly-execution-frontend",
   "version": "0.2.0",
   "private": true,
+  "description": "LIONYX-E weekly time tracker for web, desktop, and Android.",
+  "author": "LIONYX-E",
   "type": "module",
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
-    "web": "expo start --web",
+    "android:build:apk": "eas build --platform android --profile apk",
+    "web": "expo start --web --port 8081",
+    "web:dev": "expo start --web --port 8081 --no-open",
+    "build:web": "node scripts/build-web.cjs",
     "test": "node --test tests/*.test.js",
     "electron": "electron electron/main.cjs",
-    "desktop:dev": "set ELECTRON_START_URL=http://localhost:8081&& electron electron/main.cjs"
+    "desktop:dev": "concurrently -k \"npm:web:dev\" \"npm:desktop:dev:electron\"",
+    "desktop:dev:electron": "wait-on http://127.0.0.1:8081 && cross-env ELECTRON_START_URL=http://127.0.0.1:8081 electron electron/main.cjs",
+    "desktop:package": "node scripts/package-desktop.cjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",
-    "@react-native-async-storage/async-storage": "^2.0.0",
+    "@react-native-async-storage/async-storage": "1.23.1",
     "expo": "~52.0.11",
     "expo-asset": "~11.0.1",
-    "expo-av": "~15.0.2",
     "expo-notifications": "~0.29.14",
     "expo-speech": "~13.0.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-native": "0.76.0",
+    "react-native": "0.76.9",
     "react-native-web": "~0.19.13"
   },
   "devDependencies": {
     "@types/react": "~18.3.12",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "electron": "^31.7.7",
-    "typescript": "^5.6.3"
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.6.3",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.openai.weeklyexecution.desktop",
+    "productName": "Weekly Execution Intelligence",
+    "icon": "assets/icon.ico",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/icon.ico",
+      "electron/*.cjs",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
+    }
   }
 }

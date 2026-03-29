@@ -3,6 +3,8 @@ const path = require('path');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+const windowIconPath = path.join(__dirname, '..', 'assets', 'icon.ico');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -10,10 +12,12 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#121212',
+    icon: windowIconPath,
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
     },
   });
 

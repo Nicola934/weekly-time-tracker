@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session, select
 
-from .models import MissedHabit, Session as WorkSession, SessionStatus, Task
+from .models import MissedHabit, Session as WorkSession, SessionQualityLabel, SessionStatus, Task
 from .schemas import HabitPattern, SessionMissedRequest
+
+START_WINDOW_LEAD = timedelta(hours=1)
+
+
+def _comparable_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=None) if value.tzinfo else value
 
 
 class BehaviorService:
@@ -18,8 +26,18 @@ class BehaviorService:
             raise ValueError("Session is already marked missed")
         if session.status != SessionStatus.planned:
             raise ValueError("Only planned sessions can be marked missed")
+        reference_time = _comparable_datetime(datetime.now().replace(microsecond=0))
+        planned_start = _comparable_datetime(session.planned_start)
+        if planned_start and reference_time and reference_time < planned_start - START_WINDOW_LEAD:
+            raise ValueError(
+                "Sessions can only be marked missed within the start window or after start time"
+            )
 
         session.status = SessionStatus.missed
+        session.objective_completed = False
+        session.objective_locked = True
+        session.quality_score = 0
+        session.quality_label = SessionQualityLabel.failed
         habit = MissedHabit(
             session_id=session.id,
             task_id=session.task_id,

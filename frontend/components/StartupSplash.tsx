@@ -1,11 +1,17 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { ResizeMode, Video } from 'expo-av';
+import React, { useCallback, useEffect, useRef } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
-const STARTUP_VIDEO = require('../assets/lionyxe-startup.mp4');
+const STARTUP_LOG_PREFIX = '[startupSplash]';
+const STARTUP_LOGO = require('../assets/logo.png');
+const SPLASH_MIN_DURATION_MS = 5000;
 
 export default function StartupSplash({ onFinish }: { onFinish: () => void }) {
-  const [fallbackTriggered, setFallbackTriggered] = useState(false);
   const finishedRef = useRef(false);
 
   const finishOnce = useCallback(() => {
@@ -19,60 +25,78 @@ export default function StartupSplash({ onFinish }: { onFinish: () => void }) {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setFallbackTriggered(true);
       finishOnce();
-    }, 6500);
+    }, SPLASH_MIN_DURATION_MS);
 
     return () => clearTimeout(timer);
   }, [finishOnce]);
 
   return (
     <View style={styles.container}>
-      {!fallbackTriggered ? (
-        <Video
-          source={STARTUP_VIDEO}
-          style={styles.video}
-          resizeMode={ResizeMode.COVER}
-          shouldPlay
-          isMuted
-          isLooping={false}
-          onPlaybackStatusUpdate={(status) => {
-            if (!status.isLoaded) {
-              return;
-            }
-
-            if (status.didJustFinish) {
-              finishOnce();
-            }
-          }}
-          onError={finishOnce}
-        />
-      ) : null}
       <View style={styles.overlay}>
-        <Text style={styles.brand}>LIONYX-E</Text>
-        <ActivityIndicator color="#D6A436" />
-        <Text style={styles.loading}>Preparing execution workspace...</Text>
+        <View style={styles.glow} />
+        <View style={styles.card}>
+          <Image
+            accessibilityLabel="LIONYX-E logo"
+            onError={(event) => {
+              console.error(
+                `${STARTUP_LOG_PREFIX} logo render failed`,
+                event?.nativeEvent,
+              );
+            }}
+            resizeMode="contain"
+            source={STARTUP_LOGO}
+            style={styles.logo}
+          />
+          <Text style={styles.brand}>LIONYX-E</Text>
+          <ActivityIndicator color="#D6A436" />
+          <Text style={styles.loading}>Preparing execution workspace...</Text>
+        </View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212' },
-  video: { ...StyleSheet.absoluteFillObject },
+  container: {
+    flex: 1,
+    backgroundColor: '#121212',
+  },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(18,18,18,0.28)',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingBottom: 72,
-    gap: 12,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  glow: {
+    position: 'absolute',
+    width: 280,
+    height: 280,
+    borderRadius: 999,
+    backgroundColor: '#2B2110',
+    opacity: 0.55,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#2C2C2C',
+    backgroundColor: 'rgba(26,26,26,0.92)',
+  },
+  logo: {
+    width: 72,
+    height: 72,
   },
   brand: {
     color: '#D6A436',
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '700',
-    letterSpacing: 2,
+    letterSpacing: 1.6,
   },
   loading: { color: '#F0F0F0', fontSize: 13 },
 });

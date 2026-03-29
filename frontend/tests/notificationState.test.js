@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  clearScheduledReminder,
   clearSessionNotificationState,
   createEmptyNotificationState,
+  hasDeliveredLateReminder,
   markLateReminderDelivered,
+  pruneInactiveLateReminders,
   reconcileStoredReminders,
 } from '../services/notificationState.js';
 
@@ -28,8 +31,18 @@ test('deduplicated scheduling keeps matching reminders and avoids duplicate sche
 });
 
 test('persistent late-reminder suppression is tracked in state', () => {
-  const state = markLateReminderDelivered(createEmptyNotificationState(), 44, '2026-03-21T10:15:00.000Z');
-  assert.equal(state.deliveredLateReminders['44'], '2026-03-21T10:15:00.000Z');
+  const state = markLateReminderDelivered(
+    createEmptyNotificationState(),
+    44,
+    '2026-03-21T10:15:00.000Z',
+    10,
+  );
+  assert.deepEqual(state.deliveredLateReminders['44'], {
+    deliveredAt: '2026-03-21T10:15:00.000Z',
+    latenessMinutes: 10,
+  });
+  assert.equal(hasDeliveredLateReminder(state, 44, 10), true);
+  assert.equal(hasDeliveredLateReminder(state, 44, 15), false);
 });
 
 test('rescheduling on config or session changes cancels stale reminders and schedules replacements', () => {
@@ -52,10 +65,54 @@ test('cleanup removes scheduled reminders and late state when a session ends or 
       '9:pre': { sessionId: 9, eventType: 'pre', identifier: 'pre-9', triggerAt: '2026-03-21T09:55:00.000Z' },
       '9:start': { sessionId: 9, eventType: 'start', identifier: 'start-9', triggerAt: '2026-03-21T10:00:00.000Z' },
     },
-    deliveredLateReminders: { '9': '2026-03-21T10:20:00.000Z' },
+    deliveredLateReminders: {
+      '9': { deliveredAt: '2026-03-21T10:20:00.000Z', latenessMinutes: 20 },
+    },
   };
 
   const cleaned = clearSessionNotificationState(existingState, 9);
   assert.deepEqual(cleaned.scheduledReminders, {});
   assert.deepEqual(cleaned.deliveredLateReminders, {});
+});
+
+test('single reminder cleanup preserves the other session reminder', () => {
+  const existingState = {
+    scheduledReminders: {
+      '9:pre': { sessionId: 9, eventType: 'pre', identifier: 'pre-9', triggerAt: '2026-03-21T09:55:00.000Z' },
+      '9:start': { sessionId: 9, eventType: 'start', identifier: 'start-9', triggerAt: '2026-03-21T10:00:00.000Z' },
+    },
+    deliveredLateReminders: {},
+  };
+
+  const cleaned = clearScheduledReminder(existingState, 9, 'pre');
+  assert.deepEqual(Object.keys(cleaned.scheduledReminders), ['9:start']);
+});
+
+test('late reminder state is pruned once a session expires or leaves planned status', () => {
+  const existingState = {
+    scheduledReminders: {},
+    deliveredLateReminders: {
+      '9': { deliveredAt: '2026-03-21T10:20:00.000Z', latenessMinutes: 20 },
+      '10': { deliveredAt: '2026-03-21T10:10:00.000Z', latenessMinutes: 10 },
+    },
+  };
+
+  const cleaned = pruneInactiveLateReminders(
+    existingState,
+    [
+      {
+        id: 9,
+        status: 'planned',
+        plannedEnd: '2026-03-21T10:45:00.000Z',
+      },
+      {
+        id: 10,
+        status: 'missed',
+        plannedEnd: '2026-03-21T10:45:00.000Z',
+      },
+    ],
+    new Date('2026-03-21T10:30:00.000Z'),
+  );
+
+  assert.deepEqual(Object.keys(cleaned.deliveredLateReminders), ['9']);
 });

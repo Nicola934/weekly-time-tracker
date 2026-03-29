@@ -4,46 +4,6 @@ version = "0.1.0"
 description = "Weekly Execution & Behavior Intelligence System backend"
 readme = "README.md"
 requires-python = ">=3.11"
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
@@ -51,6 +11,7 @@ dependencies = [
   "pydantic-settings>=2.6.0",
   "python-dateutil>=2.9.0",
   "openpyxl>=3.1.5",
+  "psycopg2-binary>=2.9.10",
   "pyttsx3>=2.98"
 ]
 
@@ -63,144 +24,13 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-[tool.ruff]
-line-length = 100
-
-=======
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 
 [tool.ruff]
 line-length = 100
 
-
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 [tool.setuptools]
 packages = { find = { include = ["backend*"] } }
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
 build-backend = "setuptools.build_meta"
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
-=======
-build-backend = "setuptools.build_meta"
->>>>>>> theirs
