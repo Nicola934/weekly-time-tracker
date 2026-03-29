@@ -92,10 +92,12 @@ class MetricsService:
         db: Session,
         period_start: datetime,
         period_end: datetime,
+        user_id: int,
     ) -> MetricsResponse:
         sessions = list(
             db.exec(
                 select(WorkSession).where(
+                    WorkSession.user_id == user_id,
                     WorkSession.planned_start >= period_start,
                     WorkSession.planned_end <= period_end,
                 )

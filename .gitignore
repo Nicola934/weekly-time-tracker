@@ -3,60 +3,12 @@ __pycache__/
 .ruff_cache/
 .venv/
 *.pyc
+*.egg-info/
 backend.db
 node_modules/
 dist/
 .expo/
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
-<<<<<<< ours
 coverage/
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
-=======
-coverage/
->>>>>>> theirs
+frontend/.env
+frontend/release/
+frontend/export-android-check/

@@ -11,6 +11,8 @@ from backend.app.models import (
     Task,
 )
 
+TEST_USER_ID = 1
+
 
 def _memory_db() -> Session:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -28,6 +30,7 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
             objective="Improve system architecture",
             long_term_goal="System Development",
             priority=5,
+            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -39,12 +42,14 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
                 planned_start=datetime(2026, 3, 24, 14, 0, 0),
                 planned_end=datetime(2026, 3, 24, 15, 0, 0),
                 status=SessionStatus.missed,
+                user_id=TEST_USER_ID,
             ),
             WorkSession(
                 task_id=task.id,
                 planned_start=datetime(2026, 3, 25, 15, 0, 0),
                 planned_end=datetime(2026, 3, 25, 16, 0, 0),
                 status=SessionStatus.missed,
+                user_id=TEST_USER_ID,
             ),
         ]
         partial_session = WorkSession(
@@ -55,6 +60,7 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
             actual_end=datetime(2026, 3, 26, 15, 0, 0),
             status=SessionStatus.completed,
             completion_percent=50,
+            user_id=TEST_USER_ID,
         )
         db.add_all([*missed_sessions, partial_session])
         db.commit()
@@ -67,11 +73,17 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
                     reason_category=MissedReasonCategory.social_media,
                     captured_at=item.planned_end,
                     time_lost_minutes=45,
+                    user_id=TEST_USER_ID,
                 )
             )
         db.commit()
 
-        feedback = AdvisorService().generate(db, period_start, period_end).weekly_feedback
+        feedback = AdvisorService().generate(
+            db,
+            period_start,
+            period_end,
+            TEST_USER_ID,
+        ).weekly_feedback
 
         assert "A recurring pattern shows" not in feedback.patterns
         assert "It suggests that" not in feedback.narrative
@@ -102,6 +114,7 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
             objective="Sell to property management companies",
             long_term_goal="Business Development",
             priority=4,
+            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -118,6 +131,7 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
                     status=SessionStatus.completed,
                     completion_percent=100,
                     objective_completed=True,
+                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -128,12 +142,18 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
                     status=SessionStatus.completed,
                     completion_percent=100,
                     objective_completed=True,
+                    user_id=TEST_USER_ID,
                 ),
             ]
         )
         db.commit()
 
-        feedback = AdvisorService().generate(db, period_start, period_end).weekly_feedback
+        feedback = AdvisorService().generate(
+            db,
+            period_start,
+            period_end,
+            TEST_USER_ID,
+        ).weekly_feedback
 
         assert feedback.wins.startswith("You executed with control this week.")
         assert feedback.patterns == (

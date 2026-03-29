@@ -20,6 +20,7 @@ from .models import (
     Task,
 )
 from .notifier import resolve_task_default_goal
+from .ownership import get_owned_record, require_owned_record
 from .schemas import SessionEndRequest, SessionStartRequest
 
 START_WINDOW_LEAD = timedelta(hours=1)
@@ -55,29 +56,33 @@ def _normalize_quality_label(label: SessionQualityLabel | str) -> SessionQuality
 
 
 class TrackerService:
-    def _task_objective(self, db: Session, task_id: int) -> str | None:
-        task = db.get(Task, task_id)
+    def _task_objective(self, db: Session, task_id: int, user_id: int) -> str | None:
+        task = get_owned_record(db, Task, task_id, user_id)
         if task and task.objective and task.objective.strip():
             return task.objective.strip()
         return None
 
-    def _session_objective(self, db: Session, session: WorkSession) -> str | None:
+    def _session_objective(self, db: Session, session: WorkSession, user_id: int) -> str | None:
         if session.objective and session.objective.strip():
             return session.objective.strip()
         if session.output_notes and session.output_notes.strip():
             return session.output_notes.strip()
-        return self._task_objective(db, session.task_id)
+        return self._task_objective(db, session.task_id, user_id)
 
     def sync_overdue_sessions(
         self,
         db: Session,
+        user_id: int,
         reference: datetime | None = None,
     ) -> int:
         now = _comparable_datetime(reference or _current_timestamp())
         overdue_sessions = [
             item
             for item in db.exec(
-                select(WorkSession).where(WorkSession.status == SessionStatus.planned)
+                select(WorkSession).where(
+                    WorkSession.user_id == user_id,
+                    WorkSession.status == SessionStatus.planned,
+                )
             ).all()
             if _comparable_datetime(item.planned_end)
             and _comparable_datetime(item.planned_end) < now
@@ -89,6 +94,7 @@ class TrackerService:
             item.session_id
             for item in db.exec(
                 select(MissedHabit).where(
+                    MissedHabit.user_id == user_id,
                     MissedHabit.session_id.in_([item.id for item in overdue_sessions])
                 )
             ).all()
@@ -110,6 +116,7 @@ class TrackerService:
             if session.id not in existing_habits:
                 db.add(
                     MissedHabit(
+                        user_id=user_id,
                         session_id=session.id,
                         task_id=session.task_id,
                         reason_category=MissedReasonCategory.unknown,
@@ -124,22 +131,26 @@ class TrackerService:
         db.commit()
         return updated
 
-    def start_session(self, db: Session, payload: SessionStartRequest) -> WorkSession:
-        self.sync_overdue_sessions(db, payload.actual_start)
+    def start_session(self, db: Session, payload: SessionStartRequest, user_id: int) -> WorkSession:
+        self.sync_overdue_sessions(db, user_id, payload.actual_start)
         session = None
         effective_start = payload.actual_start or _current_timestamp()
 
         if payload.session_id:
-            session = db.get(WorkSession, payload.session_id)
+            session = get_owned_record(db, WorkSession, payload.session_id, user_id)
         elif payload.schedule_block_id:
             session = db.exec(
                 select(WorkSession).where(
+                    WorkSession.user_id == user_id,
                     WorkSession.schedule_block_id == payload.schedule_block_id
                 )
             ).first()
 
         active_session = db.exec(
-            select(WorkSession).where(WorkSession.status == SessionStatus.active)
+            select(WorkSession).where(
+                WorkSession.user_id == user_id,
+                WorkSession.status == SessionStatus.active,
+            )
         ).first()
         if active_session and (not session or active_session.id != session.id):
             raise ValueError("Another session is already active")
@@ -163,7 +174,7 @@ class TrackerService:
 
             session.actual_start = effective_start
             session.status = SessionStatus.active
-            session.objective = self._session_objective(db, session)
+            session.objective = self._session_objective(db, session, user_id)
             session.start_delta_minutes = calculate_start_delta(
                 session.planned_start,
                 session.actual_start,
@@ -178,9 +189,13 @@ class TrackerService:
         planned_end = planned_start
 
         if payload.schedule_block_id:
-            block = db.get(ScheduleBlock, payload.schedule_block_id)
-            if not block:
-                raise ValueError("Schedule block not found")
+            block = require_owned_record(
+                db,
+                ScheduleBlock,
+                payload.schedule_block_id,
+                user_id,
+                "Schedule block not found",
+            )
             planned_start = block.start_time
             planned_end = block.end_time
             comparable_start = _comparable_datetime(effective_start)
@@ -191,15 +206,24 @@ class TrackerService:
             if _comparable_datetime(planned_end) and _comparable_datetime(planned_end) < comparable_start:
                 raise ValueError("Past sessions are locked for review")
 
+        task = require_owned_record(
+            db,
+            Task,
+            payload.task_id,
+            user_id,
+            f"Task not found for id {payload.task_id}",
+        )
+
         session = WorkSession(
+            user_id=user_id,
             task_id=payload.task_id,
             schedule_block_id=payload.schedule_block_id,
             planned_start=planned_start,
             planned_end=planned_end,
             actual_start=effective_start,
             status=SessionStatus.active,
-            objective=self._task_objective(db, payload.task_id),
-            goal_context=resolve_task_default_goal(db.get(Task, payload.task_id)),
+            objective=self._task_objective(db, payload.task_id, user_id),
+            goal_context=resolve_task_default_goal(task),
             start_delta_minutes=calculate_start_delta(planned_start, effective_start),
             timezone=payload.timezone,
         )
@@ -208,10 +232,14 @@ class TrackerService:
         db.refresh(session)
         return session
 
-    def end_session(self, db: Session, payload: SessionEndRequest) -> WorkSession:
-        session = db.get(WorkSession, payload.session_id)
-        if not session:
-            raise ValueError("Session not found")
+    def end_session(self, db: Session, payload: SessionEndRequest, user_id: int) -> WorkSession:
+        session = require_owned_record(
+            db,
+            WorkSession,
+            payload.session_id,
+            user_id,
+            "Session not found",
+        )
 
         if session.status == SessionStatus.completed and session.objective_locked:
             return session
@@ -260,11 +288,15 @@ class TrackerService:
         db.refresh(session)
         return session
 
-    def delete_session(self, db: Session, session_id: int) -> dict[str, int | None]:
-        self.sync_overdue_sessions(db)
-        session = db.get(WorkSession, session_id)
-        if not session:
-            raise ValueError("Session not found")
+    def delete_session(self, db: Session, session_id: int, user_id: int) -> dict[str, int | None]:
+        self.sync_overdue_sessions(db, user_id)
+        session = require_owned_record(
+            db,
+            WorkSession,
+            session_id,
+            user_id,
+            "Session not found",
+        )
 
         if session.status == SessionStatus.active:
             raise ValueError("Active sessions cannot be deleted")
@@ -278,7 +310,7 @@ class TrackerService:
         db.delete(session)
 
         if schedule_block_id:
-            block = db.get(ScheduleBlock, schedule_block_id)
+            block = get_owned_record(db, ScheduleBlock, schedule_block_id, user_id)
             if block:
                 db.delete(block)
 
@@ -288,9 +320,15 @@ class TrackerService:
             "schedule_block_id": schedule_block_id,
         }
 
-    def list_sessions(self, db: Session) -> list[WorkSession]:
-        self.sync_overdue_sessions(db)
-        return list(db.exec(select(WorkSession).order_by(WorkSession.planned_start)).all())
+    def list_sessions(self, db: Session, user_id: int) -> list[WorkSession]:
+        self.sync_overdue_sessions(db, user_id)
+        return list(
+            db.exec(
+                select(WorkSession)
+                .where(WorkSession.user_id == user_id)
+                .order_by(WorkSession.planned_start)
+            ).all()
+        )
 
     def punctuality_snapshot(self, session: WorkSession) -> dict[str, float | str]:
         if not session.actual_start:

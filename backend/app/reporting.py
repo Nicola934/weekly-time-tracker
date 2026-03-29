@@ -101,20 +101,24 @@ class ReportingService:
         db: Session,
         period_start: datetime,
         period_end: datetime,
+        user_id: int,
     ) -> WeeklyReportResponse:
-        self.tracker.sync_overdue_sessions(db, period_end)
-        effective_sessions = self._sessions_for_period(db, period_start, period_end)
+        self.tracker.sync_overdue_sessions(db, user_id, period_end)
+        effective_sessions = self._sessions_for_period(db, period_start, period_end, user_id)
         week_start = _start_of_week(period_start)
         week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
-        week_sessions = self._sessions_for_period(db, week_start, week_end)
+        week_sessions = self._sessions_for_period(db, week_start, week_end, user_id)
         previous_sessions = self._sessions_for_period(
             db,
             period_start - timedelta(days=7),
             period_end - timedelta(days=7),
+            user_id,
         )
-        tasks = {task.id: task for task in db.exec(select(Task)).all()}
+        tasks = {
+            task.id: task for task in db.exec(select(Task).where(Task.user_id == user_id)).all()
+        }
         task_hours: dict[str, float] = {}
-        habits = self.behavior.weekly_patterns(db, period_start, period_end)
+        habits = self.behavior.weekly_patterns(db, period_start, period_end, user_id)
 
         for item in effective_sessions:
             label = self._task_title(tasks, item.task_id)
@@ -131,9 +135,11 @@ class ReportingService:
                 habits=habits,
                 period_start=week_start,
                 period_end=week_end,
+                user_id=user_id,
             ),
+            user_id,
         )
-        advisory = self.advisor.generate(db, period_start, period_end)
+        advisory = self.advisor.generate(db, period_start, period_end, user_id)
         category_objectives = self._build_category_objectives(
             week_sessions=week_sessions,
             tasks=tasks,
@@ -171,14 +177,14 @@ class ReportingService:
         return WeeklyReportResponse(
             period_start=period_start,
             period_end=period_end,
-            metrics=self.metrics.compute_metrics(db, period_start, period_end),
+            metrics=self.metrics.compute_metrics(db, period_start, period_end, user_id),
             habits=habits,
             task_hours=task_hours,
             category_objectives=category_objectives,
             category_trends=category_trends,
             repeated_session_trends=repeated_session_trends,
             reflection_summary=self._build_reflection_summary(effective_sessions),
-            streaks=self._build_streaks(db, period_end),
+            streaks=self._build_streaks(db, period_end, user_id),
             timeline=self._build_timeline(effective_sessions, tasks),
             recommendations=recommendations,
             advisor=advisory,
@@ -189,10 +195,12 @@ class ReportingService:
         db: Session,
         period_start: datetime,
         period_end: datetime,
+        user_id: int,
     ) -> list[WorkSession]:
         return list(
             db.exec(
                 select(WorkSession).where(
+                    WorkSession.user_id == user_id,
                     WorkSession.planned_start >= period_start,
                     WorkSession.planned_end <= period_end,
                 )
@@ -368,9 +376,14 @@ class ReportingService:
         self,
         db: Session,
         period_end: datetime,
+        user_id: int,
     ) -> StreakSummaryResponse:
         sessions = list(
-            db.exec(select(WorkSession).order_by(WorkSession.planned_start)).all()
+            db.exec(
+                select(WorkSession)
+                .where(WorkSession.user_id == user_id)
+                .order_by(WorkSession.planned_start)
+            ).all()
         )
         cutoff = _comparable_datetime(period_end)
         historical_sessions = [
@@ -443,6 +456,7 @@ class ReportingService:
         habits: list,
         period_start: datetime,
         period_end: datetime,
+        user_id: int,
     ) -> WeeklyProgressMemory:
         objective_sessions = [
             item
@@ -470,6 +484,7 @@ class ReportingService:
             weakest_time_bucket = top_bucket if top_count >= 2 else None
 
         return WeeklyProgressMemory(
+            user_id=user_id,
             week_start=period_start,
             week_end=period_end,
             objective_completion_rate=_completion_percent(
@@ -489,9 +504,11 @@ class ReportingService:
         self,
         db: Session,
         memory: WeeklyProgressMemory,
+        user_id: int,
     ) -> None:
         existing = db.exec(
             select(WeeklyProgressMemory).where(
+                WeeklyProgressMemory.user_id == user_id,
                 WeeklyProgressMemory.week_start == memory.week_start
             )
         ).first()

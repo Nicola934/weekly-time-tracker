@@ -5,6 +5,8 @@ from sqlmodel import Session, SQLModel, create_engine
 from backend.app.models import Session as WorkSession, SessionFailureReason, SessionStatus, Task
 from backend.app.reporting import ReportingService
 
+TEST_USER_ID = 1
+
 
 def _memory_db() -> Session:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -22,6 +24,7 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
             objective="Ship the tracker changes",
             long_term_goal="Backend",
             priority=4,
+            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -44,6 +47,7 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     failure_reason=SessionFailureReason.distraction,
                     distraction_category="Social media",
                     quality_score=60,
+                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -58,6 +62,7 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
+                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -72,12 +77,18 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
+                    user_id=TEST_USER_ID,
                 ),
             ]
         )
         db.commit()
 
-        report = ReportingService().weekly_report(db, week_start, period_end)
+        report = ReportingService().weekly_report(
+            db,
+            week_start,
+            period_end,
+            TEST_USER_ID,
+        )
 
     assert report.reflection_summary.top_failure_reason == "Distraction"
     assert report.reflection_summary.top_failure_reason_count == 1

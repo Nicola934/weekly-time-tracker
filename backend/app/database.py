@@ -103,7 +103,10 @@ def create_db_and_tables() -> None:
         return
 
     _ensure_column("task", "category", "TEXT DEFAULT ''")
+    _ensure_column("task", "user_id", "INTEGER")
+    _ensure_column("scheduleblock", "user_id", "INTEGER")
     _ensure_column("session", "reminder_offset_minutes", "INTEGER")
+    _ensure_column("session", "user_id", "INTEGER")
     _ensure_column("session", "objective", "TEXT")
     _ensure_column("session", "goal_context", "TEXT")
     _ensure_column("session", "objective_completed", "BOOLEAN DEFAULT 0")
@@ -115,6 +118,11 @@ def create_db_and_tables() -> None:
     _ensure_column("session", "start_delta_minutes", "REAL")
     _ensure_column("session", "quality_score", "REAL DEFAULT 0")
     _ensure_column("session", "quality_label", "TEXT DEFAULT 'failed'")
+    _ensure_column("missedhabit", "user_id", "INTEGER")
+    _ensure_column("notificationconfig", "user_id", "INTEGER")
+    _ensure_column("goalcontextconfig", "user_id", "INTEGER")
+    _ensure_column("syncevent", "user_id", "INTEGER")
+    _ensure_column("weeklyprogressmemory", "user_id", "INTEGER")
     _backfill_session_objective()
     _backfill_session_objective_completed()
     _backfill_session_quality_label()

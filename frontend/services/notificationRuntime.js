@@ -28,7 +28,7 @@ import {
 
 const NOTIFICATION_LOG_PREFIX = '[notifications]';
 const ENABLE_VOICE_DELIVERY =
-  process.env.EXPO_PUBLIC_ENABLE_VOICE_FEATURES === 'true';
+  process.env.EXPO_PUBLIC_ENABLE_VOICE_FEATURES !== 'false';
 const ANDROID_NOTIFICATION_CHANNEL_ID = 'weekly-execution-reminders';
 let notificationHandlerConfigured = false;
 let androidNotificationChannelPromise = null;

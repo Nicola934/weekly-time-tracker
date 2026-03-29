@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, select
 
 from .models import MissedHabit, Session as WorkSession, SessionQualityLabel, SessionStatus, Task
+from .ownership import get_owned_record, require_owned_record
 from .schemas import HabitPattern, SessionMissedRequest
 
 START_WINDOW_LEAD = timedelta(hours=1)
@@ -18,10 +19,19 @@ def _comparable_datetime(value: datetime | None) -> datetime | None:
 
 
 class BehaviorService:
-    def record_missed_session(self, db: Session, payload: SessionMissedRequest) -> MissedHabit:
-        session = db.get(WorkSession, payload.session_id)
-        if not session:
-            raise ValueError("Session not found")
+    def record_missed_session(
+        self,
+        db: Session,
+        payload: SessionMissedRequest,
+        user_id: int,
+    ) -> MissedHabit:
+        session = require_owned_record(
+            db,
+            WorkSession,
+            payload.session_id,
+            user_id,
+            "Session not found",
+        )
         if session.status == SessionStatus.missed:
             raise ValueError("Session is already marked missed")
         if session.status != SessionStatus.planned:
@@ -39,6 +49,7 @@ class BehaviorService:
         session.quality_score = 0
         session.quality_label = SessionQualityLabel.failed
         habit = MissedHabit(
+            user_id=user_id,
             session_id=session.id,
             task_id=session.task_id,
             reason_category=payload.reason_category,
@@ -52,10 +63,17 @@ class BehaviorService:
         db.refresh(habit)
         return habit
 
-    def weekly_patterns(self, db: Session, period_start: datetime, period_end: datetime) -> list[HabitPattern]:
+    def weekly_patterns(
+        self,
+        db: Session,
+        period_start: datetime,
+        period_end: datetime,
+        user_id: int,
+    ) -> list[HabitPattern]:
         habits = list(
             db.exec(
                 select(MissedHabit).where(
+                    MissedHabit.user_id == user_id,
                     MissedHabit.captured_at >= period_start,
                     MissedHabit.captured_at <= period_end,
                 )
@@ -84,8 +102,14 @@ class BehaviorService:
             )
         ]
 
-    def identify_behavior_risks(self, db: Session, period_start: datetime, period_end: datetime) -> list[str]:
-        patterns = self.weekly_patterns(db, period_start, period_end)
+    def identify_behavior_risks(
+        self,
+        db: Session,
+        period_start: datetime,
+        period_end: datetime,
+        user_id: int,
+    ) -> list[str]:
+        patterns = self.weekly_patterns(db, period_start, period_end, user_id)
         risks: list[str] = []
         if patterns:
             top = patterns[0]
@@ -94,6 +118,7 @@ class BehaviorService:
         sessions = list(
             db.exec(
                 select(WorkSession).where(
+                    WorkSession.user_id == user_id,
                     WorkSession.planned_start >= period_start,
                     WorkSession.planned_end <= period_end,
                     WorkSession.status == SessionStatus.missed,

@@ -54,6 +54,7 @@ class TaskBase(SQLModel):
 
 class Task(TaskBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -67,6 +68,7 @@ class ScheduleBlockBase(SQLModel):
 
 class ScheduleBlock(ScheduleBlockBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
 
 
 class SessionBase(SQLModel):
@@ -96,6 +98,7 @@ class SessionBase(SQLModel):
 
 class Session(SessionBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -110,10 +113,12 @@ class MissedHabitBase(SQLModel):
 
 class MissedHabit(MissedHabitBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
 
 
 class NotificationConfig(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     tone: NotificationTone = NotificationTone.strict
     pre_session_minutes: int = 10
     enabled: bool = True
@@ -124,11 +129,13 @@ class NotificationConfig(SQLModel, table=True):
 
 class GoalContextConfig(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     category_goals_json: str = "{}"
 
 
 class SyncEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     entity_type: str
     entity_id: int
     action: str
@@ -138,6 +145,7 @@ class SyncEvent(SQLModel, table=True):
 
 class WeeklyProgressMemory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="useraccount.id", index=True)
     week_start: datetime
     week_end: datetime
     objective_completion_rate: float = 0
@@ -150,3 +158,20 @@ class WeeklyProgressMemory(SQLModel, table=True):
     weakest_time_bucket: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class UserAccount(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    email: str = Field(index=True, unique=True)
+    password_hash: str
+    password_salt: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AuthToken(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="useraccount.id", index=True)
+    token_hash: str = Field(index=True, unique=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_used_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

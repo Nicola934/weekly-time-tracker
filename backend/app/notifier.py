@@ -84,19 +84,26 @@ def find_category_goals(
 
 
 class NotificationConfigService:
-    def get_or_create(self, db: Session) -> NotificationConfig:
-        config = db.exec(select(NotificationConfig)).first()
+    def get_or_create(self, db: Session, user_id: int) -> NotificationConfig:
+        config = db.exec(
+            select(NotificationConfig).where(NotificationConfig.user_id == user_id)
+        ).first()
         if config:
             return config
 
-        config = NotificationConfig()
+        config = NotificationConfig(user_id=user_id)
         db.add(config)
         db.commit()
         db.refresh(config)
         return config
 
-    def update(self, db: Session, payload: NotificationConfigUpdate) -> NotificationConfig:
-        config = self.get_or_create(db)
+    def update(
+        self,
+        db: Session,
+        payload: NotificationConfigUpdate,
+        user_id: int,
+    ) -> NotificationConfig:
+        config = self.get_or_create(db, user_id)
         for key, value in payload.model_dump().items():
             setattr(config, key, value)
         db.add(config)
@@ -106,12 +113,14 @@ class NotificationConfigService:
 
 
 class GoalContextService:
-    def get_or_create(self, db: Session) -> GoalContextConfig:
-        config = db.exec(select(GoalContextConfig)).first()
+    def get_or_create(self, db: Session, user_id: int) -> GoalContextConfig:
+        config = db.exec(
+            select(GoalContextConfig).where(GoalContextConfig.user_id == user_id)
+        ).first()
         if config:
             return config
 
-        config = GoalContextConfig()
+        config = GoalContextConfig(user_id=user_id)
         db.add(config)
         db.commit()
         db.refresh(config)
@@ -153,16 +162,21 @@ class GoalContextService:
             updated_at=getattr(config, "updated_at", None),
         )
 
-    def get_category_goals(self, db: Session) -> GoalContextSettingsResponse:
-        config = self.get_or_create(db)
+    def get_category_goals(
+        self,
+        db: Session,
+        user_id: int,
+    ) -> GoalContextSettingsResponse:
+        config = self.get_or_create(db, user_id)
         return self._build_goal_context_response(config)
 
     def update(
         self,
         db: Session,
         payload: GoalContextSettingsUpdate,
+        user_id: int,
     ) -> GoalContextSettingsResponse:
-        config = self.get_or_create(db)
+        config = self.get_or_create(db, user_id)
         normalized = normalize_category_goals(payload.category_goals)
         config.category_goals_json = json.dumps(normalized)
         db.add(config)
@@ -175,13 +189,14 @@ class GoalContextService:
         db: Session,
         category: str | None,
         goal: str | None,
+        user_id: int,
     ) -> GoalContextSettingsResponse:
         normalized_category = normalize_text(category)
         normalized_goal = normalize_text(goal)
         if not normalized_category or not normalized_goal:
-            return self.get_category_goals(db)
+            return self.get_category_goals(db, user_id)
 
-        config = self.get_or_create(db)
+        config = self.get_or_create(db, user_id)
         category_goals = self._load_category_goals(config)
         existing = find_category_goals(category_goals, normalized_category)
         existing_keys = {item.casefold() for item in existing}
@@ -202,7 +217,12 @@ class GoalContextService:
 
         return self._build_goal_context_response(config)
 
-    def fallback_goal_for_category(self, db: Session, category: str | None) -> str | None:
-        category_goals = self.get_category_goals(db).category_goals
+    def fallback_goal_for_category(
+        self,
+        db: Session,
+        category: str | None,
+        user_id: int,
+    ) -> str | None:
+        category_goals = self.get_category_goals(db, user_id).category_goals
         goals = find_category_goals(category_goals, category)
         return goals[0] if goals else None

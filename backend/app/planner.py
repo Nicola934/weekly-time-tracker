@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from .models import ScheduleBlock, Session as WorkSession, SessionStatus, Task
+from .ownership import require_owned_record
 from .schemas import ScheduleCreate, TaskCreate
 
 logger = logging.getLogger(__name__)
@@ -16,30 +17,51 @@ def _comparable_datetime(value: datetime | None) -> datetime | None:
 
 
 class PlannerService:
-    def create_task(self, db: Session, payload: TaskCreate) -> Task:
+    def create_task(self, db: Session, payload: TaskCreate, user_id: int) -> Task:
         task = Task.model_validate(payload)
+        task.user_id = user_id
         db.add(task)
         db.commit()
         db.refresh(task)
         return task
 
-    def list_tasks(self, db: Session) -> list[Task]:
-        return list(db.exec(select(Task).order_by(Task.priority, Task.created_at)).all())
+    def list_tasks(self, db: Session, user_id: int) -> list[Task]:
+        return list(
+            db.exec(
+                select(Task)
+                .where(Task.user_id == user_id)
+                .order_by(Task.priority, Task.created_at)
+            ).all()
+        )
 
-    def create_schedule_block(self, db: Session, payload: ScheduleCreate) -> ScheduleBlock:
+    def create_schedule_block(
+        self,
+        db: Session,
+        payload: ScheduleCreate,
+        user_id: int,
+    ) -> tuple[ScheduleBlock, WorkSession]:
         if payload.end_time <= payload.start_time:
             raise ValueError("Schedule end time must be after start time")
         if _comparable_datetime(payload.start_time) <= _comparable_datetime(
             datetime.now().replace(microsecond=0)
         ):
             raise ValueError("Only future sessions can be scheduled")
+        require_owned_record(
+            db,
+            Task,
+            payload.task_id,
+            user_id,
+            f"Task not found for id {payload.task_id}",
+        )
 
         block = ScheduleBlock.model_validate(payload)
+        block.user_id = user_id
         db.add(block)
         db.commit()
         db.refresh(block)
 
         planned_session = WorkSession(
+            user_id=user_id,
             task_id=block.task_id,
             schedule_block_id=block.id,
             planned_start=block.start_time,
@@ -53,25 +75,34 @@ class PlannerService:
         )
         db.add(planned_session)
         db.commit()
-        return block
+        db.refresh(planned_session)
+        return block, planned_session
 
     def update_planned_session(
         self,
         db: Session,
         session_id: int,
         payload: ScheduleCreate,
+        user_id: int,
     ) -> WorkSession:
         logger.info("Planner session lookup for update: session_id=%s", session_id)
         if payload.end_time <= payload.start_time:
             raise ValueError("Schedule end time must be after start time")
+        require_owned_record(
+            db,
+            Task,
+            payload.task_id,
+            user_id,
+            f"Task not found for id {payload.task_id}",
+        )
 
-        session = db.get(WorkSession, session_id)
-        if not session:
-            logger.warning(
-                "Planner session update failed: session_id=%s not found",
-                session_id,
-            )
-            raise ValueError(f"Session not found for id {session_id}")
+        session = require_owned_record(
+            db,
+            WorkSession,
+            session_id,
+            user_id,
+            f"Session not found for id {session_id}",
+        )
         if session.status != SessionStatus.planned:
             logger.warning(
                 "Planner session update failed: session_id=%s status=%s",
@@ -99,14 +130,13 @@ class PlannerService:
         session.timezone = payload.timezone
 
         if session.schedule_block_id:
-            block = db.get(ScheduleBlock, session.schedule_block_id)
-            if not block:
-                logger.warning(
-                    "Planner session update failed: session_id=%s missing schedule_block_id=%s",
-                    session_id,
-                    session.schedule_block_id,
-                )
-                raise ValueError("Schedule block not found")
+            block = require_owned_record(
+                db,
+                ScheduleBlock,
+                session.schedule_block_id,
+                user_id,
+                "Schedule block not found",
+            )
 
             block.task_id = payload.task_id
             block.start_time = payload.start_time
@@ -126,5 +156,11 @@ class PlannerService:
         )
         return session
 
-    def list_schedule(self, db: Session) -> list[ScheduleBlock]:
-        return list(db.exec(select(ScheduleBlock).order_by(ScheduleBlock.start_time)).all())
+    def list_schedule(self, db: Session, user_id: int) -> list[ScheduleBlock]:
+        return list(
+            db.exec(
+                select(ScheduleBlock)
+                .where(ScheduleBlock.user_id == user_id)
+                .order_by(ScheduleBlock.start_time)
+            ).all()
+        )
