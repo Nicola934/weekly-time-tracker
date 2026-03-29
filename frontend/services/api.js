@@ -1,5 +1,8 @@
-export const DEFAULT_API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+import { resolveApiBaseUrl, resolveApiRuntimeConfig } from './runtimeConfig.js';
+
+const DEFAULT_API_RUNTIME_CONFIG = resolveApiRuntimeConfig();
+
+export const DEFAULT_API_BASE_URL = resolveApiBaseUrl();
 const API_LOG_PREFIX = '[api]';
 const STARTUP_RETRY_DELAYS_MS = [2000, 4000, 8000];
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
@@ -47,7 +50,10 @@ function ensureApiInitLogged(baseUrl) {
   }
 
   apiInitLogged = true;
-  logApiInfo('init', { baseUrl });
+  logApiInfo('init', {
+    baseUrl,
+    source: DEFAULT_API_RUNTIME_CONFIG.source,
+  });
 }
 
 function delay(ms) {
@@ -608,8 +614,9 @@ export async function fetchWeeklyReport(
 }
 
 export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
-  ensureApiInitLogged(baseUrl);
-  const url = `${baseUrl}/tasks`;
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  ensureApiInitLogged(normalizedBaseUrl);
+  const url = `${normalizedBaseUrl}/tasks`;
   const method = 'POST';
   const init = {
     method,
@@ -652,7 +659,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
         status: response.status,
         url,
         method,
-        baseUrl,
+        baseUrl: normalizedBaseUrl,
       });
     }
 
@@ -667,7 +674,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
         rawCreateTaskResponse: parsedCreateTaskResponse,
       });
 
-      const latestTasks = await fetchTasks(baseUrl);
+      const latestTasks = await fetchTasks(normalizedBaseUrl);
       const recoveredTask = findCreatedTaskMatch(latestTasks, payload);
 
       if (recoveredTask?.id) {
@@ -685,7 +692,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
         detail,
         url,
         method,
-        baseUrl,
+        baseUrl: normalizedBaseUrl,
       });
 
       logApiError('createTask invalid payload', error, {
@@ -709,7 +716,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
             detail: resolveFetchErrorDetail(nextError),
             url,
             method,
-            baseUrl,
+            baseUrl: normalizedBaseUrl,
             cause: nextError,
           });
 
