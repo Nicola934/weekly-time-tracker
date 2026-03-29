@@ -33,17 +33,23 @@ engine = create_engine(DATABASE_URL, **_engine_kwargs(DATABASE_URL))
 
 def _ensure_column(table_name: str, column_name: str, definition: str) -> None:
     with engine.begin() as connection:
-        columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                f'PRAGMA table_info("{table_name}")'
-            ).fetchall()
-        }
-        if column_name in columns:
+        if connection.dialect.name == "sqlite":
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    f'PRAGMA table_info("{table_name}")'
+                ).fetchall()
+            }
+            if column_name in columns:
+                return
+
+            connection.exec_driver_sql(
+                f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
+            )
             return
 
         connection.exec_driver_sql(
-            f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
+            f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS "{column_name}" {definition}'
         )
 
 
@@ -99,8 +105,6 @@ def _backfill_session_quality_label() -> None:
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
-    if engine.dialect.name != "sqlite":
-        return
 
     _ensure_column("task", "category", "TEXT DEFAULT ''")
     _ensure_column("task", "user_id", "INTEGER")
