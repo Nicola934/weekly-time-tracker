@@ -1,0 +1,3 @@
+# Render and other legacy deploy targets may still install from the repo root.
+# Delegate to the canonical backend runtime requirements file.
+-r backend/requirements.txt

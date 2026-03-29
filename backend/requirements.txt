@@ -1,5 +1,13 @@
-fastapi
-uvicorn
-sqlmodel
-psycopg2-binary
-python-dotenv
+# Canonical backend runtime dependencies.
+# Keep this aligned with the pyproject runtime dependency list so
+# legacy deploy targets that still install from requirements files
+# boot with the same package set as `pip install .`.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+sqlmodel>=0.0.22
+pydantic-settings>=2.6.0
+python-dateutil>=2.9.0
+openpyxl>=3.1.5
+psycopg2-binary>=2.9.10
+python-dotenv>=1.0.1
+pyttsx3>=2.98
