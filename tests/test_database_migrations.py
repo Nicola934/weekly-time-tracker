@@ -78,3 +78,16 @@ def test_backfill_session_objective_completed_uses_boolean_false(monkeypatch) ->
             WHERE "objective_completed" IS NULL
             """
     ]
+
+
+def test_backfill_session_quality_label_is_skipped_for_postgres(monkeypatch) -> None:
+    connection = _FakeConnection("postgresql")
+    monkeypatch.setattr(
+        database,
+        "engine",
+        SimpleNamespace(begin=lambda: _FakeBegin(connection)),
+    )
+
+    database._backfill_session_quality_label()
+
+    assert connection.commands == []

@@ -89,6 +89,9 @@ def _backfill_session_objective_completed() -> None:
 
 def _backfill_session_quality_label() -> None:
     with engine.begin() as connection:
+        if connection.dialect.name != "sqlite":
+            return
+
         connection.exec_driver_sql(
             """
             UPDATE "session"
