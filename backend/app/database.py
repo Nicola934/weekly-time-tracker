@@ -60,18 +60,18 @@ def _backfill_session_objective() -> None:
             UPDATE "session"
             SET "objective" = COALESCE(
                 (
-                    SELECT NULLIF(TRIM("scheduleblock"."notes"), "")
+                    SELECT NULLIF(TRIM("scheduleblock"."notes"), '')
                     FROM "scheduleblock"
                     WHERE "scheduleblock"."id" = "session"."schedule_block_id"
                 ),
                 (
-                    SELECT NULLIF(TRIM("task"."objective"), "")
+                    SELECT NULLIF(TRIM("task"."objective"), '')
                     FROM "task"
                     WHERE "task"."id" = "session"."task_id"
                 ),
-                NULLIF(TRIM("output_notes"), "")
+                NULLIF(TRIM("output_notes"), '')
             )
-            WHERE "objective" IS NULL OR TRIM("objective") = ""
+            WHERE "objective" IS NULL OR TRIM("objective") = ''
             """
         )
 
