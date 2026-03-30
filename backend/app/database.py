@@ -81,7 +81,7 @@ def _backfill_session_objective_completed() -> None:
         connection.exec_driver_sql(
             """
             UPDATE "session"
-            SET "objective_completed" = 0
+            SET "objective_completed" = FALSE
             WHERE "objective_completed" IS NULL
             """
         )
@@ -113,8 +113,8 @@ def create_db_and_tables() -> None:
     _ensure_column("session", "user_id", "INTEGER")
     _ensure_column("session", "objective", "TEXT")
     _ensure_column("session", "goal_context", "TEXT")
-    _ensure_column("session", "objective_completed", "BOOLEAN DEFAULT 0")
-    _ensure_column("session", "objective_locked", "BOOLEAN DEFAULT 0")
+    _ensure_column("session", "objective_completed", "BOOLEAN DEFAULT FALSE")
+    _ensure_column("session", "objective_locked", "BOOLEAN DEFAULT FALSE")
     _ensure_column("session", "reflection_notes", "TEXT DEFAULT ''")
     _ensure_column("session", "failure_reason", "TEXT")
     _ensure_column("session", "failure_reason_detail", "TEXT")

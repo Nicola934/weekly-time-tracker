@@ -59,3 +59,22 @@ def test_backfill_session_objective_uses_sql_string_literals(monkeypatch) -> Non
     assert 'NULLIF(TRIM("output_notes"), \'\')' in sql
     assert 'TRIM("objective") = \'\'' in sql
     assert '""' not in sql
+
+
+def test_backfill_session_objective_completed_uses_boolean_false(monkeypatch) -> None:
+    connection = _FakeConnection("postgresql")
+    monkeypatch.setattr(
+        database,
+        "engine",
+        SimpleNamespace(begin=lambda: _FakeBegin(connection)),
+    )
+
+    database._backfill_session_objective_completed()
+
+    assert connection.commands == [
+        """
+            UPDATE "session"
+            SET "objective_completed" = FALSE
+            WHERE "objective_completed" IS NULL
+            """
+    ]
