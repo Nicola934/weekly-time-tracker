@@ -40,3 +40,22 @@ def test_ensure_column_uses_postgres_safe_add_column(monkeypatch) -> None:
     assert connection.commands == [
         'ALTER TABLE "task" ADD COLUMN IF NOT EXISTS "user_id" INTEGER'
     ]
+
+
+def test_backfill_session_objective_uses_sql_string_literals(monkeypatch) -> None:
+    connection = _FakeConnection("postgresql")
+    monkeypatch.setattr(
+        database,
+        "engine",
+        SimpleNamespace(begin=lambda: _FakeBegin(connection)),
+    )
+
+    database._backfill_session_objective()
+
+    assert len(connection.commands) == 1
+    sql = connection.commands[0]
+    assert 'NULLIF(TRIM("scheduleblock"."notes"), \'\')' in sql
+    assert 'NULLIF(TRIM("task"."objective"), \'\')' in sql
+    assert 'NULLIF(TRIM("output_notes"), \'\')' in sql
+    assert 'TRIM("objective") = \'\'' in sql
+    assert '""' not in sql
