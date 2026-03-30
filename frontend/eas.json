@@ -6,6 +6,9 @@
   "build": {
     "apk": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://weekly-time-tracker.onrender.com"
+      },
       "android": {
         "buildType": "apk"
       }
