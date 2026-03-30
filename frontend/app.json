@@ -2,7 +2,7 @@
   "expo": {
     "name": "Weekly Execution Intelligence",
     "slug": "weekly-execution-intelligence",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -11,7 +11,7 @@
     ],
     "android": {
       "package": "com.openai.weeklyexecution",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
         "android.permission.SCHEDULE_EXACT_ALARM"
       ],

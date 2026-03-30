@@ -13,6 +13,10 @@ import {
   SESSION_NOTIFICATION_START_ACTION_ID,
 } from './notificationPlan.js';
 import {
+  extractSpeechTextFromNotification,
+  shouldAutoSpeakNotification,
+} from './notificationDelivery.js';
+import {
   buildReminderKey,
   clearScheduledReminder,
   clearSessionNotificationState,
@@ -245,6 +249,13 @@ function normalizeNotificationAction(response) {
   };
 }
 
+function normalizeNotificationIdentifier(notification) {
+  const identifier = notification?.request?.identifier;
+  return typeof identifier === 'string' && identifier.trim()
+    ? identifier.trim()
+    : '';
+}
+
 export async function configureNotificationActions() {
   if (Platform.OS === 'web') {
     return false;
@@ -345,6 +356,62 @@ export function subscribeToNotificationActions({
   const subscription = Notifications.addNotificationResponseReceivedListener(
     (response) => {
       void dispatch(response);
+    },
+  );
+
+  return () => {
+    isClosed = true;
+    subscription.remove();
+  };
+}
+
+export function subscribeToNotificationDeliveries({
+  onDebug,
+  onError,
+} = {}) {
+  if (Platform.OS === 'web') {
+    return () => undefined;
+  }
+
+  ensureNotificationHandlerConfigured();
+  logNotificationInfo('notification delivery listener init');
+  let isClosed = false;
+  const spokenNotificationIds = new Set();
+
+  const subscription = Notifications.addNotificationReceivedListener(
+    (notification) => {
+      if (isClosed || !shouldAutoSpeakNotification(notification)) {
+        return;
+      }
+
+      const notificationId = normalizeNotificationIdentifier(notification);
+      if (notificationId) {
+        if (spokenNotificationIds.has(notificationId)) {
+          return;
+        }
+
+        spokenNotificationIds.add(notificationId);
+      }
+
+      const speechText = extractSpeechTextFromNotification(notification);
+      if (!speechText) {
+        onDebug?.({
+          lastSpeechResult: 'speech-skipped',
+          lastNotificationResult: 'native-received',
+        });
+        return;
+      }
+
+      void deliverSpeech(speechText)
+        .then((speechResult) => {
+          onDebug?.({
+            lastSpeechResult: speechResult,
+            lastNotificationResult: 'native-received',
+          });
+        })
+        .catch((nextError) => {
+          onError?.(nextError);
+        });
     },
   );
 
@@ -693,7 +760,13 @@ export async function deliverReminder(payload, options = {}) {
     (Platform.OS === 'web' ? createWebNotifier() : createNativeNotifier());
   let notificationResult = 'notification-unavailable';
   try {
-    notificationResult = await notifier.present(payload);
+    notificationResult = await notifier.present({
+      ...payload,
+      data: {
+        ...(payload?.data ?? {}),
+        skipAutoSpeech: true,
+      },
+    });
   } catch (nextError) {
     logNotificationError('reminder presentation failed', nextError, {
       payload,

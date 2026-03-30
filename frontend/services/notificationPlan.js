@@ -239,6 +239,7 @@ export function buildNotificationPayload(
       category: normalizeText(session?.category) || null,
       goalContext: resolveGoalContext(session) || null,
       objective: resolveObjectiveText(session) || null,
+      voiceText,
     },
     voiceText,
   };

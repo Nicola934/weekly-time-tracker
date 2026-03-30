@@ -715,7 +715,9 @@ function AppShell() {
     ENABLE_STARTUP_NOTIFICATION_RUNTIME,
   );
   const notificationActionCleanupRef = useRef<() => void>(() => undefined);
+  const notificationDeliveryCleanupRef = useRef<() => void>(() => undefined);
   const notificationActionSubscribedRef = useRef(false);
+  const notificationDeliverySubscribedRef = useRef(false);
   const executionLoopInitLoggedRef = useRef(false);
   const plannerBootstrapLoggedRef = useRef(false);
   const authUserId = normalizePositiveId(authSession?.user?.id);
@@ -788,7 +790,8 @@ function AppShell() {
   const ensureNotificationActionSubscription = async () => {
     if (
       !notificationRuntimeEnabledRef.current ||
-      notificationActionSubscribedRef.current
+      (notificationActionSubscribedRef.current &&
+        notificationDeliverySubscribedRef.current)
     ) {
       return;
     }
@@ -797,27 +800,47 @@ function AppShell() {
       autoStart: notificationRuntimeEnabledRef.current,
     });
 
-    try {
-      const stopListening = notificationRuntime.subscribeToNotificationActions({
-        onStart: (action: any) =>
-          notificationActionHandlersRef.current.onStart(action),
-        onSkip: (action: any) =>
-          notificationActionHandlersRef.current.onSkip(action),
-        onError: (nextError: unknown) => {
-          logAppError('notification action handling failed', nextError);
-          setError(
-            resolveErrorMessage(
-              nextError,
-              'Failed to handle notification action',
-            ),
-          );
-        },
-      });
-      notificationActionCleanupRef.current = stopListening;
-      notificationActionSubscribedRef.current = true;
-      logAppInfo('notification action handlers subscribed');
-    } catch (nextError) {
-      logAppError('notification action subscription failed', nextError);
+    if (!notificationActionSubscribedRef.current) {
+      try {
+        const stopListening =
+          notificationRuntime.subscribeToNotificationActions({
+            onStart: (action: any) =>
+              notificationActionHandlersRef.current.onStart(action),
+            onSkip: (action: any) =>
+              notificationActionHandlersRef.current.onSkip(action),
+            onError: (nextError: unknown) => {
+              logAppError('notification action handling failed', nextError);
+              setError(
+                resolveErrorMessage(
+                  nextError,
+                  'Failed to handle notification action',
+                ),
+              );
+            },
+          });
+        notificationActionCleanupRef.current = stopListening;
+        notificationActionSubscribedRef.current = true;
+        logAppInfo('notification action handlers subscribed');
+      } catch (nextError) {
+        logAppError('notification action subscription failed', nextError);
+      }
+    }
+
+    if (!notificationDeliverySubscribedRef.current) {
+      try {
+        const stopListening =
+          notificationRuntime.subscribeToNotificationDeliveries({
+            onDebug: updateNotificationDebug,
+            onError: (nextError: unknown) => {
+              logAppError('notification delivery handling failed', nextError);
+            },
+          });
+        notificationDeliveryCleanupRef.current = stopListening;
+        notificationDeliverySubscribedRef.current = true;
+        logAppInfo('notification delivery listener subscribed');
+      } catch (nextError) {
+        logAppError('notification delivery subscription failed', nextError);
+      }
     }
   };
 
@@ -1363,6 +1386,9 @@ function AppShell() {
       notificationActionCleanupRef.current();
       notificationActionCleanupRef.current = () => undefined;
       notificationActionSubscribedRef.current = false;
+      notificationDeliveryCleanupRef.current();
+      notificationDeliveryCleanupRef.current = () => undefined;
+      notificationDeliverySubscribedRef.current = false;
       stopReminderRuntime();
     };
   }, []);
