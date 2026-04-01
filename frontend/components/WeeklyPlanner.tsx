@@ -348,6 +348,7 @@ export default function WeeklyPlanner({
   );
   const [modalDateKey, setModalDateKey] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<number | null>(null);
+  const [editorMode, setEditorMode] = useState<'edit' | 'reschedule'>('edit');
   const [taskId, setTaskId] = useState<number | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [category, setCategory] = useState('');
@@ -552,6 +553,7 @@ export default function WeeklyPlanner({
       scheduleBlockId: null,
     };
     setEditingSessionId(null);
+    setEditorMode('edit');
     setModalDateKey(formatDateKey(date));
     setTaskId(null);
     setTaskTitle('');
@@ -604,6 +606,9 @@ export default function WeeklyPlanner({
       taskId: sessionTaskId,
       scheduleBlockId,
     };
+    setEditorMode(
+      session.availableActions?.includes('reschedule') ? 'reschedule' : 'edit',
+    );
     setSelectedMonthKey(formatMonthKey(plannedStartDate));
     setSelectedWeekKey(getWeekKey(plannedStartDate));
     setEditingSessionId(sessionId);
@@ -653,6 +658,7 @@ export default function WeeklyPlanner({
     };
     setModalDateKey(null);
     setEditingSessionId(null);
+    setEditorMode('edit');
     setTaskId(null);
     setTaskTitle('');
     setCategory('');
@@ -850,7 +856,9 @@ export default function WeeklyPlanner({
                       {formatTime(item.plannedStart)} - {formatTime(item.plannedEnd)}
                     </Text>
                     <Text style={styles.sessionStatus}>{item.status.toUpperCase()}</Text>
-                    {!isPastDay && item.availableActions?.includes('edit') ? (
+                    {!isPastDay &&
+                    (item.availableActions?.includes('edit') ||
+                      item.availableActions?.includes('reschedule')) ? (
                       <Pressable
                         disabled={Boolean(isUiLocked)}
                         style={[
@@ -859,7 +867,11 @@ export default function WeeklyPlanner({
                         ]}
                         onPress={() => openEditor(item)}
                       >
-                        <Text style={styles.editText}>Edit</Text>
+                        <Text style={styles.editText}>
+                          {item.availableActions?.includes('reschedule')
+                            ? 'Reschedule'
+                            : 'Edit'}
+                        </Text>
                       </Pressable>
                     ) : null}
                     {!isPastDay && item.availableActions?.includes('delete') ? (
@@ -904,7 +916,11 @@ export default function WeeklyPlanner({
         <View style={styles.backdrop}>
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>
-              {editingSessionId ? 'Edit Session' : 'Add Session'}
+              {editingSessionId
+                ? editorMode === 'reschedule'
+                  ? 'Reschedule Session'
+                  : 'Edit Session'
+                : 'Add Session'}
             </Text>
             {formError ? <Text style={styles.error}>{formError}</Text> : null}
             <Text style={styles.pickLabel}>Day</Text>

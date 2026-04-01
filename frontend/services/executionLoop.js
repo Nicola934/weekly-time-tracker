@@ -322,7 +322,7 @@ function getAvailableActions({ session, now = new Date() }) {
     return actions;
   }
 
-  return ['start', 'missed'];
+  return ['start', 'missed', 'reschedule'];
 }
 
 export function getSessionActions(sessionOrStatus, options = {}) {

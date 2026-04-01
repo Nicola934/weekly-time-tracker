@@ -207,7 +207,7 @@ test('current planned sessions still expose start and missed controls while anot
     now: new Date('2026-03-21T10:20:00'),
   });
 
-  assert.deepEqual(sessionCards[1].availableActions, ['start', 'missed']);
+  assert.deepEqual(sessionCards[1].availableActions, ['start', 'missed', 'reschedule']);
 });
 
 test('sessions become startable one hour before the planned start while staying editable', () => {
@@ -246,7 +246,7 @@ test('sessions stay non-startable before the one-hour pre-start window opens', (
   assert.equal(sessionCards[0].timingStatusLabel, 'Scheduled');
 });
 
-test('current-window planned sessions only expose start and missed controls', () => {
+test('current-window planned sessions expose start, missed, and reschedule controls', () => {
   const sessionCards = buildSessionCards({
     tasks: [{ id: 5, title: 'Focus Block', objective: 'Ship operator loop' }],
     sessions: [{
@@ -260,7 +260,7 @@ test('current-window planned sessions only expose start and missed controls', ()
     now: new Date('2026-03-21T10:20:00'),
   });
 
-  assert.deepEqual(sessionCards[0].availableActions, ['start', 'missed']);
+  assert.deepEqual(sessionCards[0].availableActions, ['start', 'missed', 'reschedule']);
 });
 
 test('past planned sessions are locked for review', () => {

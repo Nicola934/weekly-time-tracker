@@ -7,6 +7,7 @@ import {
   deleteSession,
   fetchCurrentUser,
   fetchGoalContextSettings,
+  fetchPendingSyncEvents,
   setApiAuthToken,
 } from '../services/api.js';
 
@@ -223,6 +224,29 @@ test('fetchCurrentUser sends the bearer token after auth is configured', async (
         url: 'https://weekly-time-tracker.onrender.com/auth/me',
         authorization: 'Bearer token-123',
       },
+    ]);
+  } finally {
+    clearApiAuthToken();
+    global.fetch = originalFetch;
+  }
+});
+
+test('fetchPendingSyncEvents returns the remote sync event list', async () => {
+  const originalFetch = global.fetch;
+
+  try {
+    setApiAuthToken('token-123');
+    global.fetch = async () =>
+      createJsonResponse([
+        { id: 11, entity_type: 'session', entity_id: 4, action: 'update' },
+      ]);
+
+    const pendingEvents = await fetchPendingSyncEvents(
+      'https://weekly-time-tracker.onrender.com',
+    );
+
+    assert.deepEqual(pendingEvents, [
+      { id: 11, entity_type: 'session', entity_id: 4, action: 'update' },
     ]);
   } finally {
     clearApiAuthToken();

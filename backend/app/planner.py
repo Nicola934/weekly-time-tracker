@@ -88,6 +88,9 @@ class PlannerService:
         logger.info("Planner session lookup for update: session_id=%s", session_id)
         if payload.end_time <= payload.start_time:
             raise ValueError("Schedule end time must be after start time")
+        now = _comparable_datetime(datetime.now().replace(microsecond=0))
+        if _comparable_datetime(payload.start_time) <= now:
+            raise ValueError("Rescheduled sessions must start in the future")
         require_owned_record(
             db,
             Task,
@@ -110,15 +113,13 @@ class PlannerService:
                 session.status,
             )
             raise ValueError("Only planned sessions can be edited")
-        if _comparable_datetime(session.planned_start) <= _comparable_datetime(
-            datetime.now().replace(microsecond=0)
-        ):
+        if _comparable_datetime(session.planned_end) <= now:
             logger.warning(
-                "Planner session update failed: session_id=%s planned_start=%s",
+                "Planner session update failed: session_id=%s planned_end=%s",
                 session_id,
-                session.planned_start,
+                session.planned_end,
             )
-            raise ValueError("Only future sessions can be edited")
+            raise ValueError("Only pending sessions can be rescheduled")
 
         session.task_id = payload.task_id
         session.planned_start = payload.start_time
