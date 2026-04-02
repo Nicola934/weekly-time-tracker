@@ -13,6 +13,10 @@ import {
   SESSION_NOTIFICATION_START_ACTION_ID,
 } from './notificationPlan.js';
 import {
+  extractSpeechTextFromNotification,
+  shouldAutoSpeakNotification,
+} from './notificationDelivery.js';
+import {
   buildReminderKey,
   clearScheduledReminder,
   clearSessionNotificationState,
@@ -32,6 +36,7 @@ const ENABLE_VOICE_DELIVERY =
 const ANDROID_NOTIFICATION_CHANNEL_ID = 'weekly-execution-reminders';
 let notificationHandlerConfigured = false;
 let androidNotificationChannelPromise = null;
+let scheduleDeviceRemindersQueue = Promise.resolve();
 
 function getWebNotificationApi() {
   try {
@@ -245,6 +250,13 @@ function normalizeNotificationAction(response) {
   };
 }
 
+function normalizeNotificationIdentifier(notification) {
+  const identifier = notification?.request?.identifier;
+  return typeof identifier === 'string' && identifier.trim()
+    ? identifier.trim()
+    : '';
+}
+
 export async function configureNotificationActions() {
   if (Platform.OS === 'web') {
     return false;
@@ -354,6 +366,62 @@ export function subscribeToNotificationActions({
   };
 }
 
+export function subscribeToNotificationDeliveries({
+  onDebug,
+  onError,
+} = {}) {
+  if (Platform.OS === 'web') {
+    return () => undefined;
+  }
+
+  ensureNotificationHandlerConfigured();
+  logNotificationInfo('notification delivery listener init');
+  let isClosed = false;
+  const spokenNotificationIds = new Set();
+
+  const subscription = Notifications.addNotificationReceivedListener(
+    (notification) => {
+      if (isClosed || !shouldAutoSpeakNotification(notification)) {
+        return;
+      }
+
+      const notificationId = normalizeNotificationIdentifier(notification);
+      if (notificationId) {
+        if (spokenNotificationIds.has(notificationId)) {
+          return;
+        }
+
+        spokenNotificationIds.add(notificationId);
+      }
+
+      const speechText = extractSpeechTextFromNotification(notification);
+      if (!speechText) {
+        onDebug?.({
+          lastSpeechResult: 'speech-skipped',
+          lastNotificationResult: 'native-received',
+        });
+        return;
+      }
+
+      void deliverSpeech(speechText)
+        .then((speechResult) => {
+          onDebug?.({
+            lastSpeechResult: speechResult,
+            lastNotificationResult: 'native-received',
+          });
+        })
+        .catch((nextError) => {
+          onError?.(nextError);
+        });
+    },
+  );
+
+  return () => {
+    isClosed = true;
+    subscription.remove();
+  };
+}
+
 async function clearDeliveredWebReminder(storage, reminder, onDebug) {
   if (!storage) {
     return;
@@ -438,64 +506,82 @@ export async function requestReminderPermissions() {
 }
 
 export async function scheduleDeviceReminders(sessions, config, options = {}) {
-  logNotificationInfo('schedule device reminders', {
-    sessionCount: Array.isArray(sessions) ? sessions.length : 0,
-  });
-  const now = options.now ?? new Date();
-  const storage = options.storage ?? (await createNotificationStorage());
-  const notifier =
-    options.notifier ??
-    (Platform.OS === 'web' ? createWebNotifier() : createNativeNotifier());
-  ensureNotificationHandlerConfigured();
-  await ensureAndroidNotificationChannelAsync();
-  await configureNotificationActions();
-  const displayName =
-    options.displayName ??
-    (await loadDisplayName(storage, config.display_name || 'Operator'));
-  const existingState = await loadNotificationState(storage);
-  const plannedSessions = sessions.filter(
-    (session) => String(session?.status ?? 'planned').toLowerCase() === 'planned',
-  );
-  const desiredReminders = plannedSessions.flatMap((session) =>
-    buildSessionReminderPlan(session, config, now, displayName),
-  );
-  const reconciliation = reconcileStoredReminders(
-    existingState,
-    desiredReminders,
-  );
+  const run = async () => {
+    logNotificationInfo('schedule device reminders', {
+      sessionCount: Array.isArray(sessions) ? sessions.length : 0,
+    });
+    const now = options.now ?? new Date();
+    const storage = options.storage ?? (await createNotificationStorage());
+    const notifier =
+      options.notifier ??
+      (Platform.OS === 'web' ? createWebNotifier() : createNativeNotifier());
+    ensureNotificationHandlerConfigured();
+    await ensureAndroidNotificationChannelAsync();
+    await configureNotificationActions();
+    const displayName =
+      options.displayName ??
+      (await loadDisplayName(storage, config.display_name || 'Operator'));
+    const existingState = await loadNotificationState(storage);
+    const plannedSessions = sessions.filter(
+      (session) => String(session?.status ?? 'planned').toLowerCase() === 'planned',
+    );
+    const desiredReminders = plannedSessions.flatMap((session) =>
+      buildSessionReminderPlan(session, config, now, displayName),
+    );
+    const reconciliation = reconcileStoredReminders(
+      existingState,
+      desiredReminders,
+    );
 
-  for (const staleReminder of reconciliation.toCancel) {
-    await notifier.cancel(staleReminder.identifier);
-  }
-
-  const scheduled = [];
-  const nextState = { ...reconciliation.nextState };
-  for (const reminder of reconciliation.toSchedule) {
-    if (new Date(reminder.triggerAt).getTime() <= now.getTime()) {
-      const delivery = await deliverReminder(reminder.payload, {
-        notifier,
-      });
-      options.onDebug?.({
-        lastSpeechResult: delivery.speechResult,
-        lastNotificationResult: delivery.notificationResult,
-      });
-      continue;
+    for (const staleReminder of reconciliation.toCancel) {
+      await notifier.cancel(staleReminder.identifier);
     }
 
-    const identifier = await notifier.schedule(reminder);
-    const key = buildReminderKey(reminder.sessionId, reminder.eventType);
-    nextState.scheduledReminders[key] = { ...reminder, identifier };
-  }
+    const nextState = { ...reconciliation.nextState };
+    for (const reminder of reconciliation.toSchedule) {
+      const reminderKey = buildReminderKey(reminder.sessionId, reminder.eventType);
+      if (new Date(reminder.triggerAt).getTime() <= now.getTime()) {
+        const delivery = await deliverReminder(reminder.payload, {
+          notifier,
+        });
+        options.onDebug?.({
+          lastSpeechResult: delivery.speechResult,
+          lastNotificationResult: delivery.notificationResult,
+        });
 
-  await saveNotificationState(storage, nextState);
-  scheduled.push(...Object.values(nextState.scheduledReminders));
-  options.onDebug?.({
-    scheduledReminderCount: scheduled.length,
-    deliveredLateReminderCount: Object.keys(nextState.deliveredLateReminders)
-      .length,
-  });
+        if (Platform.OS !== 'web') {
+          nextState.scheduledReminders[reminderKey] = {
+            ...reminder,
+            identifier: null,
+            deliveredAt: now.toISOString(),
+          };
+        }
+        continue;
+      }
 
-  return scheduled;
+      const identifier = await notifier.schedule(reminder);
+      nextState.scheduledReminders[reminderKey] = { ...reminder, identifier };
+    }
+
+    await saveNotificationState(storage, nextState);
+    const scheduled = Object.values(nextState.scheduledReminders).filter(
+      (reminder) => reminder?.identifier,
+    );
+    options.onDebug?.({
+      scheduledReminderCount: scheduled.length,
+      deliveredLateReminderCount: Object.keys(nextState.deliveredLateReminders)
+        .length,
+    });
+
+    return scheduled;
+  };
+
+  const scheduledRun = scheduleDeviceRemindersQueue.then(run, run);
+  scheduleDeviceRemindersQueue = scheduledRun.then(
+    () => undefined,
+    () => undefined,
+  );
+  return scheduledRun;
 }
 
 export function startWebReminderTimers(reminders, options = {}) {
@@ -693,7 +779,13 @@ export async function deliverReminder(payload, options = {}) {
     (Platform.OS === 'web' ? createWebNotifier() : createNativeNotifier());
   let notificationResult = 'notification-unavailable';
   try {
-    notificationResult = await notifier.present(payload);
+    notificationResult = await notifier.present({
+      ...payload,
+      data: {
+        ...(payload?.data ?? {}),
+        skipAutoSpeech: true,
+      },
+    });
   } catch (nextError) {
     logNotificationError('reminder presentation failed', nextError, {
       payload,

@@ -299,7 +299,7 @@ function getControlState(session, now = new Date()) {
   return 'current';
 }
 
-function getAvailableActions({ session, hasActiveSession = false, now = new Date() }) {
+function getAvailableActions({ session, now = new Date() }) {
   const controlState = getControlState(session, now);
   if (controlState === 'active') {
     return ['end'];
@@ -316,17 +316,13 @@ function getAvailableActions({ session, hasActiveSession = false, now = new Date
 
   if (isFutureSession) {
     const actions = ['edit', 'delete'];
-    if (canStartFromWindow && !hasActiveSession) {
+    if (canStartFromWindow) {
       actions.unshift('start');
     }
     return actions;
   }
 
-  if (!hasActiveSession) {
-    return ['start', 'missed'];
-  }
-
-  return [];
+  return ['start', 'missed', 'reschedule'];
 }
 
 export function getSessionActions(sessionOrStatus, options = {}) {
@@ -351,9 +347,6 @@ export function buildSessionCards({
   categoryGoals = {},
 }) {
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
-  const hasActiveSession = sessions.some(
-    (session) => (session.status ?? 'planned').toLowerCase() === 'active',
-  );
 
   return sessions.map((session) => {
     const plannedStartRaw = session.planned_start ?? session.plannedStart;
@@ -397,7 +390,7 @@ export function buildSessionCards({
         plannedStart: plannedStartRaw,
         plannedEnd: plannedEndRaw,
       },
-      { hasActiveSession, now },
+      { now },
     );
     const actualEnd = actualEndRaw ? new Date(actualEndRaw) : null;
     const controlState = getControlState(

@@ -25,6 +25,7 @@ import {
   deleteSession as apiDeleteSession,
   endSession as apiEndSession,
   fetchCurrentUser,
+  fetchPendingSyncEvents,
   fetchHabits,
   fetchHealth,
   fetchGoalContextSettings,
@@ -87,6 +88,7 @@ const ENABLE_STARTUP_NOTIFICATION_ACTIONS =
   process.env.EXPO_PUBLIC_ENABLE_STARTUP_NOTIFICATION_ACTIONS !== 'false';
 const APP_LOG_PREFIX = '[app]';
 const BRAND_LOGO_HEIGHT = 32;
+const ACTIVE_DEVICE_SYNC_POLL_MS = 5_000;
 
 function logAppInfo(message: string, details?: Record<string, unknown>) {
   if (details) {
@@ -223,6 +225,13 @@ function getLocalTimezone() {
 function normalizePositiveId(value: unknown) {
   const parsedValue = Number(value);
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
+}
+
+function getLatestSyncEventId(events: any[] | null | undefined) {
+  return (events ?? []).reduce((maxEventId, event) => {
+    const eventId = normalizePositiveId(event?.id);
+    return eventId !== null && eventId > maxEventId ? eventId : maxEventId;
+  }, 0);
 }
 
 function buildPlannerTaskPayload({
@@ -715,7 +724,11 @@ function AppShell() {
     ENABLE_STARTUP_NOTIFICATION_RUNTIME,
   );
   const notificationActionCleanupRef = useRef<() => void>(() => undefined);
+  const notificationDeliveryCleanupRef = useRef<() => void>(() => undefined);
   const notificationActionSubscribedRef = useRef(false);
+  const notificationDeliverySubscribedRef = useRef(false);
+  const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
+  const remoteSyncCursorRef = useRef(0);
   const executionLoopInitLoggedRef = useRef(false);
   const plannerBootstrapLoggedRef = useRef(false);
   const authUserId = normalizePositiveId(authSession?.user?.id);
@@ -788,7 +801,8 @@ function AppShell() {
   const ensureNotificationActionSubscription = async () => {
     if (
       !notificationRuntimeEnabledRef.current ||
-      notificationActionSubscribedRef.current
+      (notificationActionSubscribedRef.current &&
+        notificationDeliverySubscribedRef.current)
     ) {
       return;
     }
@@ -797,27 +811,47 @@ function AppShell() {
       autoStart: notificationRuntimeEnabledRef.current,
     });
 
-    try {
-      const stopListening = notificationRuntime.subscribeToNotificationActions({
-        onStart: (action: any) =>
-          notificationActionHandlersRef.current.onStart(action),
-        onSkip: (action: any) =>
-          notificationActionHandlersRef.current.onSkip(action),
-        onError: (nextError: unknown) => {
-          logAppError('notification action handling failed', nextError);
-          setError(
-            resolveErrorMessage(
-              nextError,
-              'Failed to handle notification action',
-            ),
-          );
-        },
-      });
-      notificationActionCleanupRef.current = stopListening;
-      notificationActionSubscribedRef.current = true;
-      logAppInfo('notification action handlers subscribed');
-    } catch (nextError) {
-      logAppError('notification action subscription failed', nextError);
+    if (!notificationActionSubscribedRef.current) {
+      try {
+        const stopListening =
+          notificationRuntime.subscribeToNotificationActions({
+            onStart: (action: any) =>
+              notificationActionHandlersRef.current.onStart(action),
+            onSkip: (action: any) =>
+              notificationActionHandlersRef.current.onSkip(action),
+            onError: (nextError: unknown) => {
+              logAppError('notification action handling failed', nextError);
+              setError(
+                resolveErrorMessage(
+                  nextError,
+                  'Failed to handle notification action',
+                ),
+              );
+            },
+          });
+        notificationActionCleanupRef.current = stopListening;
+        notificationActionSubscribedRef.current = true;
+        logAppInfo('notification action handlers subscribed');
+      } catch (nextError) {
+        logAppError('notification action subscription failed', nextError);
+      }
+    }
+
+    if (!notificationDeliverySubscribedRef.current) {
+      try {
+        const stopListening =
+          notificationRuntime.subscribeToNotificationDeliveries({
+            onDebug: updateNotificationDebug,
+            onError: (nextError: unknown) => {
+              logAppError('notification delivery handling failed', nextError);
+            },
+          });
+        notificationDeliveryCleanupRef.current = stopListening;
+        notificationDeliverySubscribedRef.current = true;
+        logAppInfo('notification delivery listener subscribed');
+      } catch (nextError) {
+        logAppError('notification delivery subscription failed', nextError);
+      }
     }
   };
 
@@ -933,124 +967,234 @@ function AppShell() {
     promptForPermission?: boolean;
     enableNotifications?: boolean;
   } = {}) => {
-    if (authSession === null || authUserId === null) {
-      return;
+    if (refreshAllInFlightRef.current) {
+      return refreshAllInFlightRef.current;
     }
 
-    logAppInfo('API initialization', {
-      promptForPermission,
-      enableNotifications,
-    });
-
-    const cachedSnapshot = await loadOfflineSnapshot(authUserId);
-    const hasCachedData =
-      (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
-      (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
-      Boolean(cachedSnapshot?.config) ||
-      Boolean(cachedSnapshot?.goalSettings);
-    const hasCurrentState =
-      tasks.length > 0 ||
-      sessions.length > 0 ||
-      Boolean(config) ||
-      Boolean(goalSettings);
-    const hasRecoverableLocalState = hasCachedData || hasCurrentState;
-
-    try {
-      try {
-        const remoteUser = await fetchCurrentUser();
-        const remoteUserId = normalizePositiveId(remoteUser?.id);
-        if (remoteUserId !== null && remoteUserId !== authUserId) {
-          throw new Error('Signed-in account changed. Sign in again.');
-        }
-      } catch (nextError) {
-        if (isUnauthorizedError(nextError)) {
-          await clearStoredAuthSession();
-          clearApiAuthToken();
-          setAuthSession(null);
-          setPendingSyncCount(0);
-          setError('Session expired. Sign in again.');
-          throw nextError;
-        }
-
-        if (!isOfflineCapableError(nextError)) {
-          throw nextError;
-        }
+    const runRefresh = async () => {
+      if (authSession === null || authUserId === null) {
+        return;
       }
 
+      logAppInfo('API initialization', {
+        promptForPermission,
+        enableNotifications,
+      });
+
+      const cachedSnapshot = await loadOfflineSnapshot(authUserId);
+      const hasCachedData =
+        (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
+        (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
+        Boolean(cachedSnapshot?.config) ||
+        Boolean(cachedSnapshot?.goalSettings);
+      const hasCurrentState =
+        tasks.length > 0 ||
+        sessions.length > 0 ||
+        Boolean(config) ||
+        Boolean(goalSettings);
+      const hasRecoverableLocalState = hasCachedData || hasCurrentState;
+
       try {
-        await flushOfflineQueue(authUserId, {
-          createTask,
-          createSchedule,
-          updateSession: apiUpdateSession,
-          deleteSession: apiDeleteSession,
-          startSession: apiStartSession,
-          endSession: apiEndSession,
-          markSessionMissed,
+        try {
+          const remoteUser = await fetchCurrentUser();
+          const remoteUserId = normalizePositiveId(remoteUser?.id);
+          if (remoteUserId !== null && remoteUserId !== authUserId) {
+            throw new Error('Signed-in account changed. Sign in again.');
+          }
+        } catch (nextError) {
+          if (isUnauthorizedError(nextError)) {
+            await clearStoredAuthSession();
+            clearApiAuthToken();
+            setAuthSession(null);
+            setPendingSyncCount(0);
+            setError('Session expired. Sign in again.');
+            throw nextError;
+          }
+
+          if (!isOfflineCapableError(nextError)) {
+            throw nextError;
+          }
+        }
+
+        try {
+          await flushOfflineQueue(authUserId, {
+            createTask,
+            createSchedule,
+            updateSession: apiUpdateSession,
+            deleteSession: apiDeleteSession,
+            startSession: apiStartSession,
+            endSession: apiEndSession,
+            markSessionMissed,
+          });
+        } catch (nextError) {
+          if (!isOfflineCapableError(nextError)) {
+            throw nextError;
+          }
+        }
+
+        await refreshPendingSyncState();
+
+        const [
+          healthResult,
+          remoteTasksResult,
+          remoteSessionsResult,
+          remoteConfigResult,
+          remoteGoalSettingsResult,
+        ] = await Promise.allSettled([
+          runStartupStep('API init health', () => fetchHealth()),
+          runStartupStep('API init tasks', () => fetchTasks()),
+          runStartupStep('API init sessions', () => fetchSessions()),
+          runStartupStep('API init notification config', () =>
+            fetchNotificationConfig(),
+          ),
+          runStartupStep('API init goal context', () =>
+            fetchGoalContextSettings(),
+          ),
+        ]);
+
+        const healthReachable = healthResult.status === 'fulfilled';
+        const sessionsLoaded = remoteSessionsResult.status === 'fulfilled';
+        const tasksLoaded = remoteTasksResult.status === 'fulfilled';
+        const backendReachable = healthReachable || tasksLoaded || sessionsLoaded;
+
+        if (!backendReachable) {
+          const offlineFailures = [
+            {
+              label: 'health',
+              error:
+                healthResult.status === 'rejected'
+                  ? healthResult.reason
+                  : new Error('Unknown health check failure'),
+            },
+            {
+              label: 'tasks',
+              error:
+                remoteTasksResult.status === 'rejected'
+                  ? remoteTasksResult.reason
+                  : new Error('Unknown tasks failure'),
+            },
+            {
+              label: 'sessions',
+              error:
+                remoteSessionsResult.status === 'rejected'
+                  ? remoteSessionsResult.reason
+                  : new Error('Unknown sessions failure'),
+            },
+          ];
+          const offlineMessage = `Failed to connect to backend. Reason: ${offlineFailures
+            .map((failure) => describeStartupFailure(failure.label, failure.error))
+            .join('; ')}.`;
+
+          setBackendStatus('offline');
+          if (hasRecoverableLocalState) {
+            if (!hasCurrentState) {
+              applySnapshotToState(cachedSnapshot);
+            }
+            setError(
+              pendingSyncCount > 0
+                ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
+                : 'Backend offline. Using cached data.',
+            );
+            await armReminderRuntime({
+              promptForPermission,
+              forceEnable: enableNotifications,
+            });
+            return;
+          }
+
+          stopReminderRuntime();
+          setScheduleState('backend offline');
+          setError(offlineMessage);
+          throw new Error(offlineMessage);
+        }
+
+        const nextTasks =
+          remoteTasksResult.status === 'fulfilled'
+            ? remoteTasksResult.value
+            : Array.isArray(cachedSnapshot?.tasks)
+              ? cachedSnapshot.tasks
+              : tasks;
+        const nextSessions =
+          remoteSessionsResult.status === 'fulfilled'
+            ? remoteSessionsResult.value
+            : Array.isArray(cachedSnapshot?.sessions)
+              ? cachedSnapshot.sessions
+              : sessions;
+        const nextConfig =
+          remoteConfigResult.status === 'fulfilled'
+            ? resolveConfigWithDisplayName(remoteConfigResult.value)
+            : resolveConfigWithDisplayName(cachedSnapshot?.config || config);
+        const nextGoalSettings =
+          remoteGoalSettingsResult.status === 'fulfilled'
+            ? remoteGoalSettingsResult.value ?? { category_goals: {} }
+            : cachedSnapshot?.goalSettings || goalSettings;
+
+        latestReminderInputsRef.current = {
+          tasks: nextTasks,
+          sessions: nextSessions,
+          config: nextConfig,
+          categoryGoals: nextGoalSettings?.category_goals ?? {},
+        };
+
+        if (healthResult.status === 'fulfilled') {
+          setBackendStatus(
+            healthResult.value?.status === 'ok' ? 'connected' : 'unhealthy',
+          );
+        } else {
+          setBackendStatus('connected');
+        }
+
+        setTasks(nextTasks);
+        setSessions(nextSessions);
+        setConfig(nextConfig);
+        setGoalSettings(nextGoalSettings);
+
+        const dataFailures: Array<{ label: string; error: unknown }> = [];
+        if (remoteTasksResult.status === 'rejected') {
+          dataFailures.push({ label: 'tasks', error: remoteTasksResult.reason });
+        }
+        if (remoteSessionsResult.status === 'rejected') {
+          dataFailures.push({
+            label: 'sessions',
+            error: remoteSessionsResult.reason,
+          });
+        }
+
+        if (dataFailures.length > 0) {
+          const dataUnavailableMessage = buildDataUnavailableMessage(dataFailures);
+          setError(dataUnavailableMessage);
+          logAppInfo('startup data partially unavailable', {
+            failures: dataFailures.map((failure) =>
+              describeStartupFailure(failure.label, failure.error),
+            ),
+          });
+        } else {
+          setError(null);
+        }
+
+        await refreshPendingSyncState();
+        try {
+          const pendingSyncEvents = await fetchPendingSyncEvents();
+          remoteSyncCursorRef.current = getLatestSyncEventId(pendingSyncEvents);
+        } catch (nextError) {
+          if (
+            !isOfflineCapableError(nextError) &&
+            !isUnauthorizedError(nextError)
+          ) {
+            logAppError('pending sync cursor refresh failed', nextError);
+          }
+        }
+
+        await armReminderRuntime({
+          promptForPermission,
+          forceEnable: enableNotifications,
         });
       } catch (nextError) {
-        if (!isOfflineCapableError(nextError)) {
-          throw nextError;
-        }
-      }
-
-      await refreshPendingSyncState();
-
-      const [
-        healthResult,
-        remoteTasksResult,
-        remoteSessionsResult,
-        remoteConfigResult,
-        remoteGoalSettingsResult,
-      ] = await Promise.allSettled([
-        runStartupStep('API init health', () => fetchHealth()),
-        runStartupStep('API init tasks', () => fetchTasks()),
-        runStartupStep('API init sessions', () => fetchSessions()),
-        runStartupStep('API init notification config', () =>
-          fetchNotificationConfig(),
-        ),
-        runStartupStep('API init goal context', () =>
-          fetchGoalContextSettings(),
-        ),
-      ]);
-
-      const healthReachable = healthResult.status === 'fulfilled';
-      const sessionsLoaded = remoteSessionsResult.status === 'fulfilled';
-      const tasksLoaded = remoteTasksResult.status === 'fulfilled';
-      const backendReachable = healthReachable || tasksLoaded || sessionsLoaded;
-
-      if (!backendReachable) {
-        const offlineFailures = [
-          {
-            label: 'health',
-            error:
-              healthResult.status === 'rejected'
-                ? healthResult.reason
-                : new Error('Unknown health check failure'),
-          },
-          {
-            label: 'tasks',
-            error:
-              remoteTasksResult.status === 'rejected'
-                ? remoteTasksResult.reason
-                : new Error('Unknown tasks failure'),
-          },
-          {
-            label: 'sessions',
-            error:
-              remoteSessionsResult.status === 'rejected'
-                ? remoteSessionsResult.reason
-                : new Error('Unknown sessions failure'),
-          },
-        ];
-        const offlineMessage = `Failed to connect to backend. Reason: ${offlineFailures
-          .map((failure) => describeStartupFailure(failure.label, failure.error))
-          .join('; ')}.`;
-
-        setBackendStatus('offline');
-        if (hasRecoverableLocalState) {
+        if (hasRecoverableLocalState && isOfflineCapableError(nextError)) {
           if (!hasCurrentState) {
             applySnapshotToState(cachedSnapshot);
           }
+          setBackendStatus('offline');
           setError(
             pendingSyncCount > 0
               ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
@@ -1063,103 +1207,19 @@ function AppShell() {
           return;
         }
 
-        stopReminderRuntime();
-        setScheduleState('backend offline');
-        setError(offlineMessage);
-        throw new Error(offlineMessage);
+        logAppError('API initialization failed', nextError);
+        throw nextError;
       }
+    };
 
-      const nextTasks =
-        remoteTasksResult.status === 'fulfilled'
-          ? remoteTasksResult.value
-          : Array.isArray(cachedSnapshot?.tasks)
-            ? cachedSnapshot.tasks
-            : tasks;
-      const nextSessions =
-        remoteSessionsResult.status === 'fulfilled'
-          ? remoteSessionsResult.value
-          : Array.isArray(cachedSnapshot?.sessions)
-            ? cachedSnapshot.sessions
-            : sessions;
-      const nextConfig =
-        remoteConfigResult.status === 'fulfilled'
-          ? resolveConfigWithDisplayName(remoteConfigResult.value)
-          : resolveConfigWithDisplayName(cachedSnapshot?.config || config);
-      const nextGoalSettings =
-        remoteGoalSettingsResult.status === 'fulfilled'
-          ? remoteGoalSettingsResult.value ?? { category_goals: {} }
-          : cachedSnapshot?.goalSettings || goalSettings;
-
-      latestReminderInputsRef.current = {
-        tasks: nextTasks,
-        sessions: nextSessions,
-        config: nextConfig,
-        categoryGoals: nextGoalSettings?.category_goals ?? {},
-      };
-
-      if (healthResult.status === 'fulfilled') {
-        setBackendStatus(
-          healthResult.value?.status === 'ok' ? 'connected' : 'unhealthy',
-        );
-      } else {
-        setBackendStatus('connected');
+    const refreshPromise = runRefresh();
+    const trackedRefreshPromise = refreshPromise.finally(() => {
+      if (refreshAllInFlightRef.current === trackedRefreshPromise) {
+        refreshAllInFlightRef.current = null;
       }
-
-      setTasks(nextTasks);
-      setSessions(nextSessions);
-      setConfig(nextConfig);
-      setGoalSettings(nextGoalSettings);
-
-      const dataFailures: Array<{ label: string; error: unknown }> = [];
-      if (remoteTasksResult.status === 'rejected') {
-        dataFailures.push({ label: 'tasks', error: remoteTasksResult.reason });
-      }
-      if (remoteSessionsResult.status === 'rejected') {
-        dataFailures.push({
-          label: 'sessions',
-          error: remoteSessionsResult.reason,
-        });
-      }
-
-      if (dataFailures.length > 0) {
-        const dataUnavailableMessage = buildDataUnavailableMessage(dataFailures);
-        setError(dataUnavailableMessage);
-        logAppInfo('startup data partially unavailable', {
-          failures: dataFailures.map((failure) =>
-            describeStartupFailure(failure.label, failure.error),
-          ),
-        });
-      } else {
-        setError(null);
-      }
-
-      await refreshPendingSyncState();
-
-      await armReminderRuntime({
-        promptForPermission,
-        forceEnable: enableNotifications,
-      });
-    } catch (nextError) {
-      if (hasRecoverableLocalState && isOfflineCapableError(nextError)) {
-        if (!hasCurrentState) {
-          applySnapshotToState(cachedSnapshot);
-        }
-        setBackendStatus('offline');
-        setError(
-          pendingSyncCount > 0
-            ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
-            : 'Backend offline. Using cached data.',
-        );
-        await armReminderRuntime({
-          promptForPermission,
-          forceEnable: enableNotifications,
-        });
-        return;
-      }
-
-      logAppError('API initialization failed', nextError);
-      throw nextError;
-    }
+    });
+    refreshAllInFlightRef.current = trackedRefreshPromise;
+    return trackedRefreshPromise;
   };
 
   const refreshHabits = async () => {
@@ -1215,6 +1275,67 @@ function AppShell() {
 
     void refreshPendingSyncState();
   }, [authReady, authUserId, refreshPendingSyncState]);
+
+  useEffect(() => {
+    if (!authReady || authSession === null || authUserId === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollRemoteSyncChanges = async () => {
+      if (
+        cancelled ||
+        loadingRef.current ||
+        pendingActionRef.current ||
+        refreshAllInFlightRef.current
+      ) {
+        return;
+      }
+
+      try {
+        const pendingSyncEvents = await fetchPendingSyncEvents();
+        const latestSyncEventId = getLatestSyncEventId(pendingSyncEvents);
+        const previousSyncEventId = remoteSyncCursorRef.current;
+
+        if (latestSyncEventId <= 0) {
+          return;
+        }
+
+        if (latestSyncEventId > previousSyncEventId) {
+          remoteSyncCursorRef.current = latestSyncEventId;
+          logAppInfo('remote sync change detected', {
+            previousSyncEventId,
+            latestSyncEventId,
+          });
+          await refreshAll();
+          return;
+        }
+
+        remoteSyncCursorRef.current = Math.max(
+          previousSyncEventId,
+          latestSyncEventId,
+        );
+      } catch (nextError) {
+        if (
+          !cancelled &&
+          !isOfflineCapableError(nextError) &&
+          !isUnauthorizedError(nextError)
+        ) {
+          logAppError('remote sync poll failed', nextError);
+        }
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      void pollRemoteSyncChanges();
+    }, ACTIVE_DEVICE_SYNC_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [authReady, authSession, authUserId]);
 
   useEffect(() => {
     if (!authReady || authUserId === null) {
@@ -1363,6 +1484,9 @@ function AppShell() {
       notificationActionCleanupRef.current();
       notificationActionCleanupRef.current = () => undefined;
       notificationActionSubscribedRef.current = false;
+      notificationDeliveryCleanupRef.current();
+      notificationDeliveryCleanupRef.current = () => undefined;
+      notificationDeliverySubscribedRef.current = false;
       stopReminderRuntime();
     };
   }, []);
@@ -1774,7 +1898,10 @@ function AppShell() {
   };
 
   const requestPlannerEdit = (sessionCard: any) => {
-    if (pendingActionRef.current || !sessionCard.availableActions.includes('edit')) {
+    const canEditOrReschedule =
+      sessionCard.availableActions.includes('edit') ||
+      sessionCard.availableActions.includes('reschedule');
+    if (pendingActionRef.current || !canEditOrReschedule) {
       return;
     }
 
@@ -2346,6 +2473,7 @@ function AppShell() {
     setApiAuthToken(nextSession?.token);
     await saveStoredAuthSession(nextSession);
     bootSessionKeyRef.current = null;
+    remoteSyncCursorRef.current = 0;
     setAuthSession(nextSession);
     setAuthName(String(nextSession?.user?.name || '').trim());
     setAuthEmail(String(nextSession?.user?.email || '').trim());
@@ -2399,6 +2527,7 @@ function AppShell() {
     await clearStoredAuthSession();
     clearApiAuthToken();
     bootSessionKeyRef.current = null;
+    remoteSyncCursorRef.current = 0;
     stopReminderRuntime();
     setAuthSession(null);
     setTasks([]);
@@ -2763,7 +2892,8 @@ function AppShell() {
                     </Text>
                   </Pressable>
                 ) : null}
-                {item.availableActions.includes('edit') ? (
+                {item.availableActions.includes('edit') ||
+                item.availableActions.includes('reschedule') ? (
                   <Pressable
                     disabled={isUiLocked}
                     style={[
@@ -2772,7 +2902,11 @@ function AppShell() {
                     ]}
                     onPress={() => requestPlannerEdit(item)}
                   >
-                    <Text style={styles.secondaryButtonText}>Edit</Text>
+                    <Text style={styles.secondaryButtonText}>
+                      {item.availableActions.includes('reschedule')
+                        ? 'Reschedule'
+                        : 'Edit'}
+                    </Text>
                   </Pressable>
                 ) : null}
                 {item.availableActions.includes('end') ? (

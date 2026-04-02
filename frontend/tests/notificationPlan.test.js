@@ -35,6 +35,7 @@ test('buildNotificationPayload uses configured display name instead of a hardcod
   assert.equal(payload.data.eventType, 'pre');
   assert.equal(payload.data.sessionId, 7);
   assert.equal(payload.data.taskId, 3);
+  assert.equal(payload.data.voiceText, payload.body);
 });
 
 test('buildNotificationPayload keeps start voice direct and late voice goal-aware', () => {

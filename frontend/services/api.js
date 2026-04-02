@@ -692,6 +692,15 @@ export async function fetchWeeklyReport(
   });
 }
 
+export async function fetchPendingSyncEvents(baseUrl = DEFAULT_API_BASE_URL) {
+  const payload = await requestJson('/sync/pending', {
+    baseUrl,
+    message: 'Failed to load pending sync events',
+    timeoutMs: DEFAULT_STARTUP_TIMEOUT_MS,
+  });
+  return Array.isArray(payload) ? payload : [];
+}
+
 export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   ensureApiInitLogged(normalizedBaseUrl);

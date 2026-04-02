@@ -30,6 +30,27 @@ test('deduplicated scheduling keeps matching reminders and avoids duplicate sche
   assert.equal(result.toSchedule[0].eventType, 'start');
 });
 
+test('delivered native reminders stay deduplicated across re-arm passes', () => {
+  const existingState = {
+    scheduledReminders: {
+      '12:start': {
+        sessionId: 12,
+        eventType: 'start',
+        triggerAt: '2026-03-21T10:00:00.000Z',
+        identifier: null,
+        deliveredAt: '2026-03-21T10:00:10.000Z',
+      },
+    },
+    deliveredLateReminders: {},
+  };
+
+  const result = reconcileStoredReminders(existingState, desired);
+  assert.equal(result.toCancel.length, 0);
+  assert.equal(result.toSchedule.length, 1);
+  assert.equal(result.toSchedule[0].eventType, 'pre');
+  assert.equal(result.nextState.scheduledReminders['12:start'].identifier, null);
+});
+
 test('persistent late-reminder suppression is tracked in state', () => {
   const state = markLateReminderDelivered(
     createEmptyNotificationState(),
