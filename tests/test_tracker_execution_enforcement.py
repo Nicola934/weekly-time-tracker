@@ -7,8 +7,6 @@ from backend.app.models import MissedHabit, Session as WorkSession, SessionFailu
 from backend.app.schemas import SessionEndRequest
 from backend.app.tracker import TrackerService
 
-TEST_USER_ID = 1
-
 
 def _memory_db() -> Session:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -23,7 +21,6 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
             objective="Finish the API pass",
             long_term_goal="Backend",
             priority=4,
-            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -36,7 +33,6 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
             actual_start=datetime(2026, 3, 26, 10, 0, 0),
             status=SessionStatus.active,
             objective="Finish the API pass",
-            user_id=TEST_USER_ID,
         )
         db.add(session)
         db.commit()
@@ -53,7 +49,6 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
                     objective_completed=False,
                     completion_percent=0,
                 ),
-                TEST_USER_ID,
             )
 
         ended = service.end_session(
@@ -66,7 +61,6 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
                 reflection_notes="Handled two endpoints but left validation open.",
                 failure_reason=SessionFailureReason.underestimated_effort,
             ),
-            TEST_USER_ID,
         )
 
         assert ended.status == SessionStatus.completed
@@ -86,7 +80,6 @@ def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
             objective="Ship backend fixes",
             long_term_goal="Backend",
             priority=4,
-            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -98,7 +91,6 @@ def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
             planned_end=datetime(2026, 3, 24, 15, 0, 0),
             status=SessionStatus.planned,
             objective="Ship backend fixes",
-            user_id=TEST_USER_ID,
         )
         db.add(overdue)
         db.commit()
@@ -106,7 +98,6 @@ def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
 
         updated = TrackerService().sync_overdue_sessions(
             db,
-            TEST_USER_ID,
             datetime(2026, 3, 24, 15, 30, 0),
         )
 

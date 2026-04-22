@@ -13,6 +13,7 @@ import {
   getTaskCategoryLabel,
   getTaskGoalContext,
 } from '../services/executionLoop.js';
+import { validateSessionTimeRange } from '../services/plannerValidation.js';
 
 const WEEKLY_PLANNER_LOG_PREFIX = '[weeklyPlanner]';
 
@@ -170,7 +171,7 @@ function formatTimeInput(value: string) {
 
 function normalizeIdentifier(value: unknown) {
   const parsedValue = Number(value);
-  return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
+  return Number.isInteger(parsedValue) ? parsedValue : null;
 }
 
 function formatLocalDateTime(value: Date) {
@@ -325,6 +326,7 @@ export default function WeeklyPlanner({
   isActionPending,
   defaultReminderOffsetMinutes = 5,
   editRequest = null,
+  plannerStatusMessage = null,
 }: any) {
   const normalizeReminderOffset = (value: unknown) => {
     const parsedValue = Number(value);
@@ -348,7 +350,6 @@ export default function WeeklyPlanner({
   );
   const [modalDateKey, setModalDateKey] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<number | null>(null);
-  const [editorMode, setEditorMode] = useState<'edit' | 'reschedule'>('edit');
   const [taskId, setTaskId] = useState<number | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [category, setCategory] = useState('');
@@ -553,7 +554,6 @@ export default function WeeklyPlanner({
       scheduleBlockId: null,
     };
     setEditingSessionId(null);
-    setEditorMode('edit');
     setModalDateKey(formatDateKey(date));
     setTaskId(null);
     setTaskTitle('');
@@ -606,9 +606,6 @@ export default function WeeklyPlanner({
       taskId: sessionTaskId,
       scheduleBlockId,
     };
-    setEditorMode(
-      session.availableActions?.includes('reschedule') ? 'reschedule' : 'edit',
-    );
     setSelectedMonthKey(formatMonthKey(plannedStartDate));
     setSelectedWeekKey(getWeekKey(plannedStartDate));
     setEditingSessionId(sessionId);
@@ -658,7 +655,6 @@ export default function WeeklyPlanner({
     };
     setModalDateKey(null);
     setEditingSessionId(null);
-    setEditorMode('edit');
     setTaskId(null);
     setTaskTitle('');
     setCategory('');
@@ -682,20 +678,28 @@ export default function WeeklyPlanner({
         throw new Error('Choose a task or enter a task name first.');
       }
 
+      const resolvedEditingSessionId =
+        editingSessionId === null ? null : normalizeIdentifier(editingSessionId);
+      if (editingSessionId !== null && resolvedEditingSessionId === null) {
+        throw new Error('Planner update is missing a valid session id.');
+      }
+
       const { startIso, endIso } = buildSessionRange(
         parseDateKey(modalDateKey),
         startTime,
         endTime,
       );
+      const overlapError = validateSessionTimeRange(sessions, {
+        startIso,
+        endIso,
+        excludeSessionId: resolvedEditingSessionId,
+      });
+      if (overlapError) {
+        throw new Error(overlapError);
+      }
 
       setSaving(true);
       setFormError(null);
-      const resolvedEditingSessionId =
-        editingSessionId === null ? null : normalizeIdentifier(editingSessionId);
-      if (editingSessionId !== null && !resolvedEditingSessionId) {
-        throw new Error('Planner update is missing a valid session id.');
-      }
-
       const selectedTask =
         taskId === null ? null : taskMap.get(Number(taskId)) ?? null;
 
@@ -734,6 +738,8 @@ export default function WeeklyPlanner({
         startIso,
         endIso,
         reminderOffsetMinutes,
+        local_task_title: normalizedTitle,
+        local_task_category: String(category || '').trim(),
       };
       if (editingSessionId) {
         await onUpdate(payload);
@@ -761,6 +767,9 @@ export default function WeeklyPlanner({
           <Text style={styles.currentWeekText}>Current Week</Text>
         </Pressable>
       </View>
+      {plannerStatusMessage ? (
+        <Text style={styles.statusBanner}>{plannerStatusMessage}</Text>
+      ) : null}
 
       <Text style={styles.navigationLabel}>Months</Text>
       <View style={styles.monthSelector}>
@@ -856,9 +865,12 @@ export default function WeeklyPlanner({
                       {formatTime(item.plannedStart)} - {formatTime(item.plannedEnd)}
                     </Text>
                     <Text style={styles.sessionStatus}>{item.status.toUpperCase()}</Text>
-                    {!isPastDay &&
-                    (item.availableActions?.includes('edit') ||
-                      item.availableActions?.includes('reschedule')) ? (
+                    {item.syncStatusLabel ? (
+                      <Text style={styles.sessionSyncStatus}>
+                        {item.syncStatusLabel}
+                      </Text>
+                    ) : null}
+                    {!isPastDay && item.availableActions?.includes('edit') ? (
                       <Pressable
                         disabled={Boolean(isUiLocked)}
                         style={[
@@ -867,11 +879,7 @@ export default function WeeklyPlanner({
                         ]}
                         onPress={() => openEditor(item)}
                       >
-                        <Text style={styles.editText}>
-                          {item.availableActions?.includes('reschedule')
-                            ? 'Reschedule'
-                            : 'Edit'}
-                        </Text>
+                        <Text style={styles.editText}>Edit</Text>
                       </Pressable>
                     ) : null}
                     {!isPastDay && item.availableActions?.includes('delete') ? (
@@ -916,11 +924,7 @@ export default function WeeklyPlanner({
         <View style={styles.backdrop}>
           <View style={styles.modal}>
             <Text style={styles.modalTitle}>
-              {editingSessionId
-                ? editorMode === 'reschedule'
-                  ? 'Reschedule Session'
-                  : 'Edit Session'
-                : 'Add Session'}
+              {editingSessionId ? 'Edit Session' : 'Add Session'}
             </Text>
             {formError ? <Text style={styles.error}>{formError}</Text> : null}
             <Text style={styles.pickLabel}>Day</Text>
@@ -1116,6 +1120,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   currentWeekText: { color: '#F0F0F0', fontSize: 12, fontWeight: '700' },
+  statusBanner: {
+    color: '#F8D27A',
+    backgroundColor: '#2A2212',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+  },
   navigationLabel: { color: '#888C94', fontSize: 12, textTransform: 'uppercase' },
   monthSelector: {
     flexDirection: 'row',
@@ -1175,6 +1187,7 @@ const styles = StyleSheet.create({
   sessionObjectiveStatus: { color: '#888C94', fontSize: 11 },
   sessionTime: { color: '#888C94', fontSize: 12 },
   sessionStatus: { color: '#6F7278', fontSize: 11, fontWeight: '700' },
+  sessionSyncStatus: { color: '#F8D27A', fontSize: 11, fontWeight: '600' },
   editButton: {
     marginTop: 8,
     alignSelf: 'flex-start',

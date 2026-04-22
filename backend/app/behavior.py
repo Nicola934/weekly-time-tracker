@@ -60,6 +60,7 @@ class BehaviorService:
         db.add(habit)
         db.add(session)
         db.commit()
+        db.refresh(session)
         db.refresh(habit)
         return habit
 

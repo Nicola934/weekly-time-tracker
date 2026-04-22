@@ -25,11 +25,11 @@ import {
   deleteSession as apiDeleteSession,
   endSession as apiEndSession,
   fetchCurrentUser,
-  fetchPendingSyncEvents,
   fetchHabits,
   fetchHealth,
   fetchGoalContextSettings,
   fetchNotificationConfig,
+  fetchPendingSyncEvents,
   fetchSessions,
   fetchTasks,
   fetchWeeklyReport,
@@ -68,17 +68,26 @@ import {
   applyOfflineSessionMissed,
   applyOfflineSessionStart,
   applyOfflineSessionUpdate,
+  applyCompletedOperationsToSnapshot,
   buildOfflineSession,
   buildOfflineTask,
-  createTemporaryId,
+  clearEntitySyncState,
   enqueueOfflineOperation,
   flushOfflineQueue,
   getPendingOperationCount,
+  loadOfflineQueue,
   loadOfflineSnapshot,
+  markEntitySyncFailed,
+  markSessionPendingDelete,
+  markSessionPendingSync,
+  mergeOfflineSnapshot,
+  normalizeEntityId,
+  removeSessionCollection,
   saveOfflineSnapshot,
   upsertSessionCollection,
   upsertTaskCollection,
 } from './services/offlineStore.js';
+import { validateSessionTimeRange } from './services/plannerValidation.js';
 
 const ENABLE_DEV_FALLBACK =
   process.env.EXPO_PUBLIC_ENABLE_DEV_FALLBACK === 'true';
@@ -88,7 +97,6 @@ const ENABLE_STARTUP_NOTIFICATION_ACTIONS =
   process.env.EXPO_PUBLIC_ENABLE_STARTUP_NOTIFICATION_ACTIONS !== 'false';
 const APP_LOG_PREFIX = '[app]';
 const BRAND_LOGO_HEIGHT = 32;
-const ACTIVE_DEVICE_SYNC_POLL_MS = 5_000;
 
 function logAppInfo(message: string, details?: Record<string, unknown>) {
   if (details) {
@@ -225,13 +233,6 @@ function getLocalTimezone() {
 function normalizePositiveId(value: unknown) {
   const parsedValue = Number(value);
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
-}
-
-function getLatestSyncEventId(events: any[] | null | undefined) {
-  return (events ?? []).reduce((maxEventId, event) => {
-    const eventId = normalizePositiveId(event?.id);
-    return eventId !== null && eventId > maxEventId ? eventId : maxEventId;
-  }, 0);
 }
 
 function buildPlannerTaskPayload({
@@ -649,6 +650,9 @@ function AppShell() {
   const [goalSettings, setGoalSettings] = useState<any>(fallbackGoalSettings);
   const [loading, setLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState('checking');
+  const [plannerStatusMessage, setPlannerStatusMessage] = useState<string | null>(
+    null,
+  );
   const [permissionState, setPermissionState] = useState(
     ENABLE_STARTUP_NOTIFICATION_RUNTIME ? 'pending' : 'deferred',
   );
@@ -695,6 +699,20 @@ function AppShell() {
   const [weeklyReviewError, setWeeklyReviewError] = useState<string | null>(null);
   const [weeklyReviewData, setWeeklyReviewData] = useState<any | null>(null);
   const [weeklyReviewWindow, setWeeklyReviewWindow] = useState<any | null>(null);
+  const tasksRef = useRef<any[]>([]);
+  const sessionsRef = useRef<any[]>([]);
+  const configRef = useRef<any>(fallbackConfig);
+  const goalSettingsRef = useRef<any>(fallbackGoalSettings);
+  const snapshotMetaRef = useRef<{
+    lastSyncedAt: string | null;
+    lastSeenSyncEventId: number;
+  }>({
+    lastSyncedAt: null,
+    lastSeenSyncEventId: 0,
+  });
+  const lastPendingSyncEventIdRef = useRef(0);
+  const refreshAllRef = useRef<any>(async () => undefined);
+  const armReminderRuntimeRefCallback = useRef<any>(async () => undefined);
   const pendingActionRef = useRef<string | null>(null);
   const loadingRef = useRef(true);
   const sessionCardsRef = useRef<any[]>([]);
@@ -724,11 +742,7 @@ function AppShell() {
     ENABLE_STARTUP_NOTIFICATION_RUNTIME,
   );
   const notificationActionCleanupRef = useRef<() => void>(() => undefined);
-  const notificationDeliveryCleanupRef = useRef<() => void>(() => undefined);
   const notificationActionSubscribedRef = useRef(false);
-  const notificationDeliverySubscribedRef = useRef(false);
-  const refreshAllInFlightRef = useRef<Promise<void> | null>(null);
-  const remoteSyncCursorRef = useRef(0);
   const executionLoopInitLoggedRef = useRef(false);
   const plannerBootstrapLoggedRef = useRef(false);
   const authUserId = normalizePositiveId(authSession?.user?.id);
@@ -747,6 +761,100 @@ function AppShell() {
     [authSession?.user?.name],
   );
 
+  const applyResolvedState = useCallback(
+    ({
+      tasks: nextTasks = tasksRef.current,
+      sessions: nextSessions = sessionsRef.current,
+      config: nextConfig = configRef.current,
+      goalSettings: nextGoalSettings = goalSettingsRef.current,
+      lastSyncedAt = snapshotMetaRef.current.lastSyncedAt,
+      lastSeenSyncEventId = snapshotMetaRef.current.lastSeenSyncEventId,
+    }: any) => {
+      const resolvedTasks = Array.isArray(nextTasks) ? nextTasks : [];
+      const resolvedSessions = Array.isArray(nextSessions) ? nextSessions : [];
+      const resolvedConfig = resolveConfigWithDisplayName(nextConfig);
+      const resolvedGoalSettings = nextGoalSettings || fallbackGoalSettings;
+      const resolvedLastSeenSyncEventId = Number.isFinite(
+        Number(lastSeenSyncEventId),
+      )
+        ? Number(lastSeenSyncEventId)
+        : 0;
+
+      tasksRef.current = resolvedTasks;
+      sessionsRef.current = resolvedSessions;
+      configRef.current = resolvedConfig;
+      goalSettingsRef.current = resolvedGoalSettings;
+      snapshotMetaRef.current = {
+        lastSyncedAt:
+          typeof lastSyncedAt === 'string' && lastSyncedAt.trim()
+            ? lastSyncedAt
+            : null,
+        lastSeenSyncEventId: resolvedLastSeenSyncEventId,
+      };
+      lastPendingSyncEventIdRef.current = Math.max(
+        lastPendingSyncEventIdRef.current,
+        resolvedLastSeenSyncEventId,
+      );
+
+      setTasks(resolvedTasks);
+      setSessions(resolvedSessions);
+      setConfig(resolvedConfig);
+      setGoalSettings(resolvedGoalSettings);
+      latestReminderInputsRef.current = {
+        tasks: resolvedTasks,
+        sessions: resolvedSessions,
+        config: resolvedConfig,
+        categoryGoals: resolvedGoalSettings?.category_goals ?? {},
+      };
+    },
+    [resolveConfigWithDisplayName],
+  );
+
+  const persistResolvedState = useCallback(
+    async ({
+      tasks: nextTasks = tasksRef.current,
+      sessions: nextSessions = sessionsRef.current,
+      config: nextConfig = configRef.current,
+      goalSettings: nextGoalSettings = goalSettingsRef.current,
+      lastSyncedAt = snapshotMetaRef.current.lastSyncedAt,
+      lastSeenSyncEventId = snapshotMetaRef.current.lastSeenSyncEventId,
+    }: any = {}) => {
+      if (authUserId === null) {
+        return null;
+      }
+
+      const snapshot = {
+        tasks: Array.isArray(nextTasks) ? nextTasks : [],
+        sessions: Array.isArray(nextSessions) ? nextSessions : [],
+        config: resolveConfigWithDisplayName(nextConfig),
+        goalSettings: nextGoalSettings || fallbackGoalSettings,
+        lastSyncedAt:
+          typeof lastSyncedAt === 'string' && lastSyncedAt.trim()
+            ? lastSyncedAt
+            : null,
+        lastSeenSyncEventId: Number.isFinite(Number(lastSeenSyncEventId))
+          ? Number(lastSeenSyncEventId)
+          : 0,
+      };
+
+      snapshotMetaRef.current = {
+        lastSyncedAt: snapshot.lastSyncedAt,
+        lastSeenSyncEventId: snapshot.lastSeenSyncEventId,
+      };
+      await saveOfflineSnapshot(authUserId, snapshot);
+      return snapshot;
+    },
+    [authUserId, resolveConfigWithDisplayName],
+  );
+
+  const applyAndPersistResolvedState = useCallback(
+    async (nextState: any) => {
+      applyResolvedState(nextState);
+      await persistResolvedState(nextState);
+    },
+    [applyResolvedState, persistResolvedState],
+  );
+
   const applySnapshotToState = useCallback(
     (snapshot: any) => {
       if (!snapshot || typeof snapshot !== 'object') {
@@ -755,19 +863,15 @@ function AppShell() {
 
       const nextTasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
       const nextSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
-      const nextConfig = resolveConfigWithDisplayName(snapshot.config);
-      const nextGoalSettings = snapshot.goalSettings || fallbackGoalSettings;
 
-      setTasks(nextTasks);
-      setSessions(nextSessions);
-      setConfig(nextConfig);
-      setGoalSettings(nextGoalSettings);
-      latestReminderInputsRef.current = {
+      applyResolvedState({
         tasks: nextTasks,
         sessions: nextSessions,
-        config: nextConfig,
-        categoryGoals: nextGoalSettings?.category_goals ?? {},
-      };
+        config: snapshot.config,
+        goalSettings: snapshot.goalSettings,
+        lastSyncedAt: snapshot.lastSyncedAt,
+        lastSeenSyncEventId: snapshot.lastSeenSyncEventId,
+      });
       return (
         nextTasks.length > 0 ||
         nextSessions.length > 0 ||
@@ -775,7 +879,7 @@ function AppShell() {
         Boolean(snapshot.goalSettings)
       );
     },
-    [resolveConfigWithDisplayName],
+    [applyResolvedState],
   );
 
   const refreshPendingSyncState = useCallback(async () => {
@@ -801,8 +905,7 @@ function AppShell() {
   const ensureNotificationActionSubscription = async () => {
     if (
       !notificationRuntimeEnabledRef.current ||
-      (notificationActionSubscribedRef.current &&
-        notificationDeliverySubscribedRef.current)
+      notificationActionSubscribedRef.current
     ) {
       return;
     }
@@ -811,47 +914,27 @@ function AppShell() {
       autoStart: notificationRuntimeEnabledRef.current,
     });
 
-    if (!notificationActionSubscribedRef.current) {
-      try {
-        const stopListening =
-          notificationRuntime.subscribeToNotificationActions({
-            onStart: (action: any) =>
-              notificationActionHandlersRef.current.onStart(action),
-            onSkip: (action: any) =>
-              notificationActionHandlersRef.current.onSkip(action),
-            onError: (nextError: unknown) => {
-              logAppError('notification action handling failed', nextError);
-              setError(
-                resolveErrorMessage(
-                  nextError,
-                  'Failed to handle notification action',
-                ),
-              );
-            },
-          });
-        notificationActionCleanupRef.current = stopListening;
-        notificationActionSubscribedRef.current = true;
-        logAppInfo('notification action handlers subscribed');
-      } catch (nextError) {
-        logAppError('notification action subscription failed', nextError);
-      }
-    }
-
-    if (!notificationDeliverySubscribedRef.current) {
-      try {
-        const stopListening =
-          notificationRuntime.subscribeToNotificationDeliveries({
-            onDebug: updateNotificationDebug,
-            onError: (nextError: unknown) => {
-              logAppError('notification delivery handling failed', nextError);
-            },
-          });
-        notificationDeliveryCleanupRef.current = stopListening;
-        notificationDeliverySubscribedRef.current = true;
-        logAppInfo('notification delivery listener subscribed');
-      } catch (nextError) {
-        logAppError('notification delivery subscription failed', nextError);
-      }
+    try {
+      const stopListening = notificationRuntime.subscribeToNotificationActions({
+        onStart: (action: any) =>
+          notificationActionHandlersRef.current.onStart(action),
+        onSkip: (action: any) =>
+          notificationActionHandlersRef.current.onSkip(action),
+        onError: (nextError: unknown) => {
+          logAppError('notification action handling failed', nextError);
+          setError(
+            resolveErrorMessage(
+              nextError,
+              'Failed to handle notification action',
+            ),
+          );
+        },
+      });
+      notificationActionCleanupRef.current = stopListening;
+      notificationActionSubscribedRef.current = true;
+      logAppInfo('notification action handlers subscribed');
+    } catch (nextError) {
+      logAppError('notification action subscription failed', nextError);
     }
   };
 
@@ -967,234 +1050,157 @@ function AppShell() {
     promptForPermission?: boolean;
     enableNotifications?: boolean;
   } = {}) => {
-    if (refreshAllInFlightRef.current) {
-      return refreshAllInFlightRef.current;
+    if (authSession === null || authUserId === null) {
+      return;
     }
 
-    const runRefresh = async () => {
-      if (authSession === null || authUserId === null) {
-        return;
+    logAppInfo('API initialization', {
+      promptForPermission,
+      enableNotifications,
+    });
+
+    const cachedSnapshot = await loadOfflineSnapshot(authUserId);
+    let queuedOperations = await loadOfflineQueue(authUserId);
+    let workingSnapshot = mergeOfflineSnapshot(
+      cachedSnapshot,
+      {
+        tasks: tasksRef.current,
+        sessions: sessionsRef.current,
+        config: configRef.current,
+        goalSettings: goalSettingsRef.current,
+        lastSyncedAt: snapshotMetaRef.current.lastSyncedAt,
+        lastSeenSyncEventId: snapshotMetaRef.current.lastSeenSyncEventId,
+      },
+      queuedOperations,
+    );
+    const hasCachedData =
+      (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
+      (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
+      Boolean(cachedSnapshot?.config) ||
+      Boolean(cachedSnapshot?.goalSettings);
+    const hasCurrentState =
+      workingSnapshot.tasks.length > 0 ||
+      workingSnapshot.sessions.length > 0 ||
+      Boolean(workingSnapshot.config) ||
+      Boolean(workingSnapshot.goalSettings);
+    const hasRecoverableLocalState = hasCachedData || hasCurrentState;
+
+    try {
+      try {
+        const remoteUser = await fetchCurrentUser();
+        const remoteUserId = normalizePositiveId(remoteUser?.id);
+        if (remoteUserId !== null && remoteUserId !== authUserId) {
+          throw new Error('Signed-in account changed. Sign in again.');
+        }
+      } catch (nextError) {
+        if (isUnauthorizedError(nextError)) {
+          await clearStoredAuthSession();
+          clearApiAuthToken();
+          setAuthSession(null);
+          setPendingSyncCount(0);
+          setError('Session expired. Sign in again.');
+          throw nextError;
+        }
+
+        if (!isOfflineCapableError(nextError)) {
+          throw nextError;
+        }
       }
 
-      logAppInfo('API initialization', {
-        promptForPermission,
-        enableNotifications,
-      });
-
-      const cachedSnapshot = await loadOfflineSnapshot(authUserId);
-      const hasCachedData =
-        (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
-        (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
-        Boolean(cachedSnapshot?.config) ||
-        Boolean(cachedSnapshot?.goalSettings);
-      const hasCurrentState =
-        tasks.length > 0 ||
-        sessions.length > 0 ||
-        Boolean(config) ||
-        Boolean(goalSettings);
-      const hasRecoverableLocalState = hasCachedData || hasCurrentState;
-
       try {
-        try {
-          const remoteUser = await fetchCurrentUser();
-          const remoteUserId = normalizePositiveId(remoteUser?.id);
-          if (remoteUserId !== null && remoteUserId !== authUserId) {
-            throw new Error('Signed-in account changed. Sign in again.');
-          }
-        } catch (nextError) {
-          if (isUnauthorizedError(nextError)) {
-            await clearStoredAuthSession();
-            clearApiAuthToken();
-            setAuthSession(null);
-            setPendingSyncCount(0);
-            setError('Session expired. Sign in again.');
-            throw nextError;
-          }
-
-          if (!isOfflineCapableError(nextError)) {
-            throw nextError;
-          }
+        const flushResult = await flushOfflineQueue(authUserId, {
+          createTask,
+          createSchedule,
+          updateSession: apiUpdateSession,
+          deleteSession: apiDeleteSession,
+          startSession: apiStartSession,
+          endSession: apiEndSession,
+          markSessionMissed,
+        });
+        if (flushResult.flushed > 0) {
+          workingSnapshot = applyCompletedOperationsToSnapshot(
+            workingSnapshot,
+            flushResult.completedOperations,
+          );
+          applyResolvedState(workingSnapshot);
+          await persistResolvedState(workingSnapshot);
         }
-
-        try {
-          await flushOfflineQueue(authUserId, {
-            createTask,
-            createSchedule,
-            updateSession: apiUpdateSession,
-            deleteSession: apiDeleteSession,
-            startSession: apiStartSession,
-            endSession: apiEndSession,
-            markSessionMissed,
-          });
-        } catch (nextError) {
-          if (!isOfflineCapableError(nextError)) {
-            throw nextError;
-          }
+      } catch (nextError) {
+        if (!isOfflineCapableError(nextError)) {
+          throw nextError;
         }
+      }
 
-        await refreshPendingSyncState();
+      queuedOperations = await loadOfflineQueue(authUserId);
+      await refreshPendingSyncState();
 
-        const [
-          healthResult,
-          remoteTasksResult,
-          remoteSessionsResult,
-          remoteConfigResult,
-          remoteGoalSettingsResult,
-        ] = await Promise.allSettled([
-          runStartupStep('API init health', () => fetchHealth()),
-          runStartupStep('API init tasks', () => fetchTasks()),
-          runStartupStep('API init sessions', () => fetchSessions()),
-          runStartupStep('API init notification config', () =>
-            fetchNotificationConfig(),
-          ),
-          runStartupStep('API init goal context', () =>
-            fetchGoalContextSettings(),
-          ),
-        ]);
+      const [
+        healthResult,
+        remoteTasksResult,
+        remoteSessionsResult,
+        remoteConfigResult,
+        remoteGoalSettingsResult,
+      ] = await Promise.allSettled([
+        runStartupStep('API init health', () => fetchHealth()),
+        runStartupStep('API init tasks', () => fetchTasks()),
+        runStartupStep('API init sessions', () => fetchSessions()),
+        runStartupStep('API init notification config', () =>
+          fetchNotificationConfig(),
+        ),
+        runStartupStep('API init goal context', () =>
+          fetchGoalContextSettings(),
+        ),
+      ]);
 
-        const healthReachable = healthResult.status === 'fulfilled';
-        const sessionsLoaded = remoteSessionsResult.status === 'fulfilled';
-        const tasksLoaded = remoteTasksResult.status === 'fulfilled';
-        const backendReachable = healthReachable || tasksLoaded || sessionsLoaded;
+      const healthReachable = healthResult.status === 'fulfilled';
+      const sessionsLoaded = remoteSessionsResult.status === 'fulfilled';
+      const tasksLoaded = remoteTasksResult.status === 'fulfilled';
+      const backendReachable = healthReachable || tasksLoaded || sessionsLoaded;
 
-        if (!backendReachable) {
-          const offlineFailures = [
-            {
-              label: 'health',
-              error:
-                healthResult.status === 'rejected'
-                  ? healthResult.reason
-                  : new Error('Unknown health check failure'),
-            },
-            {
-              label: 'tasks',
-              error:
-                remoteTasksResult.status === 'rejected'
-                  ? remoteTasksResult.reason
-                  : new Error('Unknown tasks failure'),
-            },
-            {
-              label: 'sessions',
-              error:
-                remoteSessionsResult.status === 'rejected'
-                  ? remoteSessionsResult.reason
-                  : new Error('Unknown sessions failure'),
-            },
-          ];
-          const offlineMessage = `Failed to connect to backend. Reason: ${offlineFailures
-            .map((failure) => describeStartupFailure(failure.label, failure.error))
-            .join('; ')}.`;
+      if (!backendReachable) {
+        const offlineFailures = [
+          {
+            label: 'health',
+            error:
+              healthResult.status === 'rejected'
+                ? healthResult.reason
+                : new Error('Unknown health check failure'),
+          },
+          {
+            label: 'tasks',
+            error:
+              remoteTasksResult.status === 'rejected'
+                ? remoteTasksResult.reason
+                : new Error('Unknown tasks failure'),
+          },
+          {
+            label: 'sessions',
+            error:
+              remoteSessionsResult.status === 'rejected'
+                ? remoteSessionsResult.reason
+                : new Error('Unknown sessions failure'),
+          },
+        ];
+        const offlineMessage = `Failed to connect to backend. Reason: ${offlineFailures
+          .map((failure) => describeStartupFailure(failure.label, failure.error))
+          .join('; ')}.`;
 
-          setBackendStatus('offline');
-          if (hasRecoverableLocalState) {
-            if (!hasCurrentState) {
-              applySnapshotToState(cachedSnapshot);
-            }
-            setError(
-              pendingSyncCount > 0
-                ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
-                : 'Backend offline. Using cached data.',
-            );
-            await armReminderRuntime({
-              promptForPermission,
-              forceEnable: enableNotifications,
-            });
-            return;
-          }
-
-          stopReminderRuntime();
-          setScheduleState('backend offline');
-          setError(offlineMessage);
-          throw new Error(offlineMessage);
-        }
-
-        const nextTasks =
-          remoteTasksResult.status === 'fulfilled'
-            ? remoteTasksResult.value
-            : Array.isArray(cachedSnapshot?.tasks)
-              ? cachedSnapshot.tasks
-              : tasks;
-        const nextSessions =
-          remoteSessionsResult.status === 'fulfilled'
-            ? remoteSessionsResult.value
-            : Array.isArray(cachedSnapshot?.sessions)
-              ? cachedSnapshot.sessions
-              : sessions;
-        const nextConfig =
-          remoteConfigResult.status === 'fulfilled'
-            ? resolveConfigWithDisplayName(remoteConfigResult.value)
-            : resolveConfigWithDisplayName(cachedSnapshot?.config || config);
-        const nextGoalSettings =
-          remoteGoalSettingsResult.status === 'fulfilled'
-            ? remoteGoalSettingsResult.value ?? { category_goals: {} }
-            : cachedSnapshot?.goalSettings || goalSettings;
-
-        latestReminderInputsRef.current = {
-          tasks: nextTasks,
-          sessions: nextSessions,
-          config: nextConfig,
-          categoryGoals: nextGoalSettings?.category_goals ?? {},
-        };
-
-        if (healthResult.status === 'fulfilled') {
-          setBackendStatus(
-            healthResult.value?.status === 'ok' ? 'connected' : 'unhealthy',
+        setBackendStatus('offline');
+        if (workingSnapshot.sessions.length > 0) {
+          setPlannerStatusMessage('Offline. Showing cached planned sessions.');
+        } else if (hasRecoverableLocalState) {
+          setPlannerStatusMessage(
+            'Offline. This device has cached planner data, but no planned sessions yet.',
           );
         } else {
-          setBackendStatus('connected');
+          setPlannerStatusMessage(
+            'Offline. No cached planner data is available on this device yet.',
+          );
         }
-
-        setTasks(nextTasks);
-        setSessions(nextSessions);
-        setConfig(nextConfig);
-        setGoalSettings(nextGoalSettings);
-
-        const dataFailures: Array<{ label: string; error: unknown }> = [];
-        if (remoteTasksResult.status === 'rejected') {
-          dataFailures.push({ label: 'tasks', error: remoteTasksResult.reason });
-        }
-        if (remoteSessionsResult.status === 'rejected') {
-          dataFailures.push({
-            label: 'sessions',
-            error: remoteSessionsResult.reason,
-          });
-        }
-
-        if (dataFailures.length > 0) {
-          const dataUnavailableMessage = buildDataUnavailableMessage(dataFailures);
-          setError(dataUnavailableMessage);
-          logAppInfo('startup data partially unavailable', {
-            failures: dataFailures.map((failure) =>
-              describeStartupFailure(failure.label, failure.error),
-            ),
-          });
-        } else {
-          setError(null);
-        }
-
-        await refreshPendingSyncState();
-        try {
-          const pendingSyncEvents = await fetchPendingSyncEvents();
-          remoteSyncCursorRef.current = getLatestSyncEventId(pendingSyncEvents);
-        } catch (nextError) {
-          if (
-            !isOfflineCapableError(nextError) &&
-            !isUnauthorizedError(nextError)
-          ) {
-            logAppError('pending sync cursor refresh failed', nextError);
-          }
-        }
-
-        await armReminderRuntime({
-          promptForPermission,
-          forceEnable: enableNotifications,
-        });
-      } catch (nextError) {
-        if (hasRecoverableLocalState && isOfflineCapableError(nextError)) {
+        if (hasRecoverableLocalState) {
           if (!hasCurrentState) {
-            applySnapshotToState(cachedSnapshot);
+            applySnapshotToState(workingSnapshot);
           }
-          setBackendStatus('offline');
           setError(
             pendingSyncCount > 0
               ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
@@ -1207,20 +1213,116 @@ function AppShell() {
           return;
         }
 
-        logAppError('API initialization failed', nextError);
-        throw nextError;
+        stopReminderRuntime();
+        setScheduleState('backend offline');
+        setError(offlineMessage);
+        throw new Error(offlineMessage);
       }
-    };
 
-    const refreshPromise = runRefresh();
-    const trackedRefreshPromise = refreshPromise.finally(() => {
-      if (refreshAllInFlightRef.current === trackedRefreshPromise) {
-        refreshAllInFlightRef.current = null;
+      const nextSeenSyncEventId = lastPendingSyncEventIdRef.current;
+      const remoteSnapshot = {
+        tasks:
+          remoteTasksResult.status === 'fulfilled'
+            ? remoteTasksResult.value
+            : workingSnapshot.tasks,
+        sessions:
+          remoteSessionsResult.status === 'fulfilled'
+            ? remoteSessionsResult.value
+            : workingSnapshot.sessions,
+        config:
+          remoteConfigResult.status === 'fulfilled'
+            ? remoteConfigResult.value
+            : workingSnapshot.config,
+        goalSettings:
+          remoteGoalSettingsResult.status === 'fulfilled'
+            ? remoteGoalSettingsResult.value ?? { category_goals: {} }
+            : workingSnapshot.goalSettings,
+        lastSyncedAt: new Date().toISOString(),
+        lastSeenSyncEventId: nextSeenSyncEventId,
+      };
+      const mergedSnapshot = mergeOfflineSnapshot(
+        workingSnapshot,
+        remoteSnapshot,
+        queuedOperations,
+      );
+
+      if (healthResult.status === 'fulfilled') {
+        setBackendStatus(
+          healthResult.value?.status === 'ok' ? 'connected' : 'unhealthy',
+        );
+      } else {
+        setBackendStatus('connected');
       }
-    });
-    refreshAllInFlightRef.current = trackedRefreshPromise;
-    return trackedRefreshPromise;
+
+      applyResolvedState(mergedSnapshot);
+      await persistResolvedState(mergedSnapshot);
+      setPlannerStatusMessage(
+        mergedSnapshot.sessions.length > 0
+          ? null
+          : 'No sessions planned yet. Add a session to build this week.',
+      );
+
+      const dataFailures: Array<{ label: string; error: unknown }> = [];
+      if (remoteTasksResult.status === 'rejected') {
+        dataFailures.push({ label: 'tasks', error: remoteTasksResult.reason });
+      }
+      if (remoteSessionsResult.status === 'rejected') {
+        dataFailures.push({
+          label: 'sessions',
+          error: remoteSessionsResult.reason,
+        });
+      }
+
+      if (dataFailures.length > 0) {
+        const dataUnavailableMessage = buildDataUnavailableMessage(dataFailures);
+        setError(dataUnavailableMessage);
+        logAppInfo('startup data partially unavailable', {
+          failures: dataFailures.map((failure) =>
+            describeStartupFailure(failure.label, failure.error),
+          ),
+        });
+      } else {
+        setError(null);
+      }
+
+      await refreshPendingSyncState();
+
+      await armReminderRuntime({
+        promptForPermission,
+        forceEnable: enableNotifications,
+      });
+    } catch (nextError) {
+      if (hasRecoverableLocalState && isOfflineCapableError(nextError)) {
+        if (!hasCurrentState) {
+          applySnapshotToState(workingSnapshot);
+        }
+        setBackendStatus('offline');
+        setPlannerStatusMessage(
+          workingSnapshot.sessions.length > 0
+            ? 'Offline. Showing cached planned sessions.'
+            : 'Offline. No cached planner data is available on this device yet.',
+        );
+        setError(
+          pendingSyncCount > 0
+            ? `Backend offline. Using cached data with ${pendingSyncCount} queued changes.`
+            : 'Backend offline. Using cached data.',
+        );
+        await armReminderRuntime({
+          promptForPermission,
+          forceEnable: enableNotifications,
+        });
+        return;
+      }
+
+      logAppError('API initialization failed', nextError);
+      throw nextError;
+    }
   };
+
+  useEffect(() => {
+    refreshAllRef.current = refreshAll;
+    armReminderRuntimeRefCallback.current = armReminderRuntime;
+  }, [armReminderRuntime, refreshAll]);
 
   const refreshHabits = async () => {
     try {
@@ -1277,79 +1379,20 @@ function AppShell() {
   }, [authReady, authUserId, refreshPendingSyncState]);
 
   useEffect(() => {
-    if (!authReady || authSession === null || authUserId === null) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const pollRemoteSyncChanges = async () => {
-      if (
-        cancelled ||
-        loadingRef.current ||
-        pendingActionRef.current ||
-        refreshAllInFlightRef.current
-      ) {
-        return;
-      }
-
-      try {
-        const pendingSyncEvents = await fetchPendingSyncEvents();
-        const latestSyncEventId = getLatestSyncEventId(pendingSyncEvents);
-        const previousSyncEventId = remoteSyncCursorRef.current;
-
-        if (latestSyncEventId <= 0) {
-          return;
-        }
-
-        if (latestSyncEventId > previousSyncEventId) {
-          remoteSyncCursorRef.current = latestSyncEventId;
-          logAppInfo('remote sync change detected', {
-            previousSyncEventId,
-            latestSyncEventId,
-          });
-          await refreshAll();
-          return;
-        }
-
-        remoteSyncCursorRef.current = Math.max(
-          previousSyncEventId,
-          latestSyncEventId,
-        );
-      } catch (nextError) {
-        if (
-          !cancelled &&
-          !isOfflineCapableError(nextError) &&
-          !isUnauthorizedError(nextError)
-        ) {
-          logAppError('remote sync poll failed', nextError);
-        }
-      }
-    };
-
-    const intervalId = setInterval(() => {
-      void pollRemoteSyncChanges();
-    }, ACTIVE_DEVICE_SYNC_POLL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, [authReady, authSession, authUserId]);
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
-    if (!authReady || authUserId === null) {
-      return;
-    }
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
-    void saveOfflineSnapshot(authUserId, {
-      tasks,
-      sessions,
-      config,
-      goalSettings,
-      lastSyncedAt: new Date().toISOString(),
-    });
-  }, [authReady, authUserId, config, goalSettings, sessions, tasks]);
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  useEffect(() => {
+    goalSettingsRef.current = goalSettings;
+  }, [goalSettings]);
 
   useEffect(() => {
     loadingRef.current = loading;
@@ -1434,18 +1477,24 @@ function AppShell() {
               config: fallbackConfig,
               categoryGoals: fallbackGoalSettings.category_goals,
             };
-            setTasks(fallbackTasks);
-            setSessions(fallbackSessions);
-            setConfig(fallbackConfig);
-            setGoalSettings(fallbackGoalSettings);
+            applyResolvedState({
+              tasks: fallbackTasks,
+              sessions: fallbackSessions,
+              config: fallbackConfig,
+              goalSettings: fallbackGoalSettings,
+            });
             setBackendStatus('dev fallback');
             setError(null);
+            setPlannerStatusMessage(null);
             await armReminderRuntime();
           } else if (!cancelled) {
             logAppError('startup boot failed', nextError);
             setBackendStatus('offline');
             stopReminderRuntime();
             setScheduleState('backend offline');
+            setPlannerStatusMessage(
+              'Offline. No cached planner data is available on this device yet.',
+            );
             setError(
               resolveErrorMessage(nextError, 'Failed to connect to backend'),
             );
@@ -1476,7 +1525,8 @@ function AppShell() {
         return;
       }
 
-      void armReminderRuntime();
+      void refreshAllRef.current();
+      void armReminderRuntimeRefCallback.current();
     });
 
     return () => {
@@ -1484,12 +1534,54 @@ function AppShell() {
       notificationActionCleanupRef.current();
       notificationActionCleanupRef.current = () => undefined;
       notificationActionSubscribedRef.current = false;
-      notificationDeliveryCleanupRef.current();
-      notificationDeliveryCleanupRef.current = () => undefined;
-      notificationDeliverySubscribedRef.current = false;
       stopReminderRuntime();
     };
   }, []);
+
+  useEffect(() => {
+    if (!authReady || !authSession || authUserId === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollPendingSyncEvents = async () => {
+      if (loadingRef.current || pendingActionRef.current) {
+        return;
+      }
+
+      try {
+        const events = await fetchPendingSyncEvents(lastPendingSyncEventIdRef.current);
+        if (cancelled || !Array.isArray(events) || events.length === 0) {
+          return;
+        }
+
+        const nextLastSeenSyncEventId = events.reduce((highestId, event) => {
+          const eventId = Number(event?.id);
+          return Number.isFinite(eventId) ? Math.max(highestId, eventId) : highestId;
+        }, lastPendingSyncEventIdRef.current);
+        lastPendingSyncEventIdRef.current = nextLastSeenSyncEventId;
+        await persistResolvedState({
+          lastSeenSyncEventId: nextLastSeenSyncEventId,
+        });
+        await refreshAll();
+      } catch (nextError) {
+        if (!isOfflineCapableError(nextError)) {
+          logAppError('sync pending poll failed', nextError);
+        }
+      }
+    };
+
+    void pollPendingSyncEvents();
+    const timer = setInterval(() => {
+      void pollPendingSyncEvents();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [authReady, authSession, authUserId]);
 
   const sessionCards = useMemo(
     () =>
@@ -1653,172 +1745,386 @@ function AppShell() {
     }
   };
 
-  const upsertLocalTask = (task: any) => {
+  const upsertLocalTask = (task: any, previousIds: Array<number | string> = []) => {
+    let nextTasks = tasksRef.current;
     setTasks((current) => {
-      const nextTasks = upsertTaskCollection(current, task);
+      nextTasks = upsertTaskCollection(current, task, previousIds);
+      tasksRef.current = nextTasks;
       latestReminderInputsRef.current = {
         ...latestReminderInputsRef.current,
         tasks: nextTasks,
       };
       return nextTasks;
     });
+    return nextTasks;
   };
 
-  const upsertLocalSession = (session: any) => {
+  const upsertLocalSession = (
+    session: any,
+    previousIds: Array<number | string> = [],
+  ) => {
+    let nextSessions = sessionsRef.current;
     setSessions((current) => {
-      const nextSessions = upsertSessionCollection(current, session);
+      nextSessions = upsertSessionCollection(current, session, previousIds);
+      sessionsRef.current = nextSessions;
       latestReminderInputsRef.current = {
         ...latestReminderInputsRef.current,
         sessions: nextSessions,
       };
       return nextSessions;
     });
+    return nextSessions;
   };
 
-  const removeSessionLocally = (sessionId: number | string) => {
-    const normalizedSessionId = Number(sessionId);
-    if (!Number.isFinite(normalizedSessionId)) {
+  const removeSessionLocally = (sessionIds: Array<number | string> | number | string) => {
+    const normalizedSessionIds = Array.isArray(sessionIds)
+      ? sessionIds
+      : [sessionIds];
+    if (normalizedSessionIds.length === 0) {
       return;
     }
 
+    let nextSessions = sessionsRef.current;
     setSessions((current) => {
-      const nextSessions = current.filter(
-        (item: any) => Number(item.id) !== normalizedSessionId,
-      );
+      nextSessions = removeSessionCollection(current, normalizedSessionIds);
+      sessionsRef.current = nextSessions;
       latestReminderInputsRef.current = {
         ...latestReminderInputsRef.current,
         sessions: nextSessions,
       };
       return nextSessions;
     });
+    return nextSessions;
   };
 
+  const isRetryableSyncError = (error: any) =>
+    isOfflineCapableError(error) || Number(error?.status) >= 500;
+
   const createTaskWithOffline = async (taskPayload: any) => {
+    const previousTasks = tasksRef.current;
+    const optimisticTask = buildOfflineTask(taskPayload);
+    const nextTasks = upsertLocalTask(optimisticTask);
+    await persistResolvedState({ tasks: nextTasks });
+
     try {
-      const createdTask = await createTask(taskPayload);
-      upsertLocalTask(createdTask);
+      const createdTask = clearEntitySyncState(await createTask(taskPayload));
+      const reconciledTasks = upsertLocalTask(createdTask, [optimisticTask.id]);
+      await persistResolvedState({ tasks: reconciledTasks });
+      setError(null);
       return createdTask;
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ tasks: previousTasks });
+        await persistResolvedState({ tasks: previousTasks });
         throw nextError;
       }
 
-      const offlineTask = buildOfflineTask(taskPayload);
-      upsertLocalTask(offlineTask);
+      const queuedTask = isOfflineCapableError(nextError)
+        ? optimisticTask
+        : markEntitySyncFailed(optimisticTask, 'createTask', nextError);
+      const queuedTasks = upsertLocalTask(queuedTask, [optimisticTask.id]);
+      await persistResolvedState({ tasks: queuedTasks });
       await enqueueOfflineOperation(authUserId, {
         type: 'createTask',
-        localTaskId: offlineTask.id,
+        localTaskId: optimisticTask.id,
         payload: taskPayload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Task saved locally and queued for sync.');
-      return offlineTask;
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Task saved locally and queued for sync.');
+      return queuedTask;
     }
   };
 
   const createScheduleWithOffline = async (schedulePayload: any, selectedTask: any) => {
-    try {
-      return await createSchedule(schedulePayload);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const overlapError = validateSessionTimeRange(sessionsRef.current, {
+      startIso: schedulePayload?.start_time,
+      endIso: schedulePayload?.end_time,
+    });
+    if (overlapError) {
+      throw new Error(overlapError);
+    }
+
+    const optimisticSession = buildOfflineSession(schedulePayload, selectedTask);
+    const previousSessions = sessionsRef.current;
+    const nextSessions = upsertLocalSession(optimisticSession);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately =
+      normalizeEntityId(schedulePayload?.task_id) === null ||
+      Number(schedulePayload?.task_id) < 0;
+
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local planner session without an account.');
       }
 
-      const offlineSession = buildOfflineSession(schedulePayload, selectedTask);
-      upsertLocalSession(offlineSession);
       await enqueueOfflineOperation(authUserId, {
         type: 'createSchedule',
-        localSessionId: offlineSession.id,
+        localSessionId: optimisticSession.id,
         payload: schedulePayload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Session saved locally and queued for sync.');
+      setError('Session saved locally and queued for sync.');
       return {
-        id: null,
-        session_id: offlineSession.id,
+        session_id: optimisticSession.id,
+        session: optimisticSession,
+      };
+    }
+
+    try {
+      const createdSchedule = await createSchedule(schedulePayload);
+      const canonicalSession = clearEntitySyncState(
+        createdSchedule?.session ?? {
+          ...optimisticSession,
+          id: createdSchedule?.session_id ?? optimisticSession.id,
+          schedule_block_id: createdSchedule?.id ?? optimisticSession.schedule_block_id,
+          task_id: schedulePayload?.task_id ?? optimisticSession.task_id,
+          is_local_only: false,
+        },
+      );
+      const reconciledSessions = upsertLocalSession(canonicalSession, [
+        optimisticSession.id,
+      ]);
+      await persistResolvedState({ sessions: reconciledSessions });
+      setError(null);
+      return {
+        ...createdSchedule,
+        session: canonicalSession,
+      };
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'createSchedule', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [optimisticSession.id]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'createSchedule',
+        localSessionId: optimisticSession.id,
+        payload: schedulePayload,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Session saved locally and queued for sync.');
+      return {
+        session_id: optimisticSession.id,
+        session: queuedSession,
       };
     }
   };
 
   const startSessionWithOffline = async (payload: any) => {
-    try {
-      return await apiStartSession(payload);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const sessionId = normalizeEntityId(payload?.session_id);
+    const existingSession =
+      sessionsRef.current.find(
+        (item: any) => normalizeEntityId(item?.id) === sessionId,
+      ) ?? null;
+    if (!existingSession) {
+      throw new Error('Session not found for local start.');
+    }
+
+    const previousSessions = sessionsRef.current;
+    const optimisticSession = markSessionPendingSync(
+      applyOfflineSessionStart(existingSession, payload),
+      'startSession',
+    );
+    const nextSessions = upsertLocalSession(optimisticSession, [sessionId]);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately =
+      (sessionId !== null && sessionId < 0) ||
+      Number(payload?.task_id) < 0;
+
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local session start without an account.');
       }
 
-      const nextSession = applyOfflineSessionStart(
-        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
-        payload,
-      );
-      if (!nextSession) {
-        throw nextError;
-      }
-
-      upsertLocalSession(nextSession);
       await enqueueOfflineOperation(authUserId, {
         type: 'startSession',
         payload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Session start saved locally and queued for sync.');
-      return nextSession;
+      setError('Session start saved locally and queued for sync.');
+      return optimisticSession;
+    }
+
+    try {
+      const startedSession = clearEntitySyncState(await apiStartSession(payload));
+      const reconciledSessions = upsertLocalSession(startedSession, [sessionId]);
+      await persistResolvedState({ sessions: reconciledSessions });
+      setError(null);
+      return startedSession;
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'startSession', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [sessionId]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'startSession',
+        payload,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Session start saved locally and queued for sync.');
+      return queuedSession;
     }
   };
 
   const endSessionWithOffline = async (payload: any) => {
-    try {
-      return await apiEndSession(payload);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const sessionId = normalizeEntityId(payload?.session_id);
+    const existingSession =
+      sessionsRef.current.find(
+        (item: any) => normalizeEntityId(item?.id) === sessionId,
+      ) ?? null;
+    if (!existingSession) {
+      throw new Error('Session not found for local end.');
+    }
+
+    const previousSessions = sessionsRef.current;
+    const optimisticSession = markSessionPendingSync(
+      applyOfflineSessionEnd(existingSession, payload),
+      'endSession',
+    );
+    const nextSessions = upsertLocalSession(optimisticSession, [sessionId]);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately = sessionId !== null && sessionId < 0;
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local session end without an account.');
       }
 
-      const nextSession = applyOfflineSessionEnd(
-        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
-        payload,
-      );
-      if (!nextSession) {
-        throw nextError;
-      }
-
-      upsertLocalSession(nextSession);
       await enqueueOfflineOperation(authUserId, {
         type: 'endSession',
         payload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Session end saved locally and queued for sync.');
-      return nextSession;
+      setError('Session end saved locally and queued for sync.');
+      return optimisticSession;
+    }
+
+    try {
+      const endedSession = clearEntitySyncState(await apiEndSession(payload));
+      const reconciledSessions = upsertLocalSession(endedSession, [sessionId]);
+      await persistResolvedState({ sessions: reconciledSessions });
+      setError(null);
+      return endedSession;
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'endSession', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [sessionId]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'endSession',
+        payload,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Session end saved locally and queued for sync.');
+      return queuedSession;
     }
   };
 
   const markSessionMissedWithOffline = async (payload: any) => {
-    try {
-      return await markSessionMissed(payload);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const sessionId = normalizeEntityId(payload?.session_id);
+    const existingSession =
+      sessionsRef.current.find(
+        (item: any) => normalizeEntityId(item?.id) === sessionId,
+      ) ?? null;
+    if (!existingSession) {
+      throw new Error('Session not found for local skip.');
+    }
+
+    const previousSessions = sessionsRef.current;
+    const optimisticSession = markSessionPendingSync(
+      applyOfflineSessionMissed(existingSession),
+      'markSessionMissed',
+    );
+    const nextSessions = upsertLocalSession(optimisticSession, [sessionId]);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately = sessionId !== null && sessionId < 0;
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local missed-session update without an account.');
       }
 
-      const nextSession = applyOfflineSessionMissed(
-        sessions.find((item: any) => Number(item.id) === Number(payload?.session_id)),
-      );
-      if (nextSession) {
-        upsertLocalSession(nextSession);
-      }
       await enqueueOfflineOperation(authUserId, {
         type: 'markSessionMissed',
         payload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Missed session saved locally and queued for sync.');
+      setError('Missed session saved locally and queued for sync.');
+      return {
+        habit: {
+          session_id: payload?.session_id,
+          reason_category: payload?.reason_category,
+          custom_reason: payload?.custom_reason ?? null,
+          time_lost_minutes: payload?.time_lost_minutes ?? 0,
+        },
+      };
+    }
+
+    try {
+      const missedResult = await markSessionMissed(payload);
+      const reconciledSession =
+        missedResult?.session && typeof missedResult.session === 'object'
+          ? clearEntitySyncState(missedResult.session)
+          : clearEntitySyncState(optimisticSession);
+      const reconciledSessions = upsertLocalSession(reconciledSession, [sessionId]);
+      await persistResolvedState({ sessions: reconciledSessions });
+      setError(null);
+      return missedResult;
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'markSessionMissed', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [sessionId]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'markSessionMissed',
+        payload,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Missed session saved locally and queued for sync.');
       return {
         habit: {
           session_id: payload?.session_id,
@@ -1831,50 +2137,142 @@ function AppShell() {
   };
 
   const deleteSessionWithOffline = async (sessionId: number | string) => {
-    try {
-      return await apiDeleteSession(sessionId);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const normalizedSessionId = normalizeEntityId(sessionId);
+    const existingSession =
+      sessionsRef.current.find(
+        (item: any) => normalizeEntityId(item?.id) === normalizedSessionId,
+      ) ?? null;
+    if (!existingSession) {
+      throw new Error('Session not found for local delete.');
+    }
+
+    const previousSessions = sessionsRef.current;
+    const optimisticSession = markSessionPendingDelete(existingSession);
+    const nextSessions = upsertLocalSession(optimisticSession, [normalizedSessionId]);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately = normalizedSessionId !== null && normalizedSessionId < 0;
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local session delete without an account.');
       }
 
-      removeSessionLocally(sessionId);
       await enqueueOfflineOperation(authUserId, {
         type: 'deleteSession',
         sessionId,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Session delete queued for sync.');
-      return { deleted: true, session_id: sessionId };
+      setError('Session cancellation saved locally and queued for sync.');
+      return { deleted: false, session_id: sessionId, pending: true };
+    }
+
+    try {
+      const deletedResult = await apiDeleteSession(sessionId);
+      const remainingSessions = removeSessionLocally([normalizedSessionId]);
+      await persistResolvedState({ sessions: remainingSessions });
+      setError(null);
+      return deletedResult;
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'deleteSession', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [normalizedSessionId]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'deleteSession',
+        sessionId,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Session cancellation saved locally and queued for sync.');
+      return { deleted: false, session_id: sessionId, pending: true };
     }
   };
 
   const updateSessionWithOffline = async (sessionId: number | string, payload: any) => {
-    try {
-      return await apiUpdateSession(sessionId, payload);
-    } catch (nextError) {
-      if (!isOfflineCapableError(nextError) || authUserId === null) {
-        throw nextError;
+    const normalizedSessionId = normalizeEntityId(sessionId);
+    const overlapError = validateSessionTimeRange(sessionsRef.current, {
+      startIso: payload?.start_time,
+      endIso: payload?.end_time,
+      excludeSessionId: normalizedSessionId,
+    });
+    if (overlapError) {
+      throw new Error(overlapError);
+    }
+
+    const existingSession =
+      sessionsRef.current.find(
+        (item: any) => normalizeEntityId(item?.id) === normalizedSessionId,
+      ) ?? null;
+    if (!existingSession) {
+      throw new Error('Session not found for local update.');
+    }
+
+    const previousSessions = sessionsRef.current;
+    const optimisticSession = markSessionPendingSync(
+      applyOfflineSessionUpdate(existingSession, payload),
+      'updateSession',
+    );
+    const nextSessions = upsertLocalSession(optimisticSession, [normalizedSessionId]);
+    await persistResolvedState({ sessions: nextSessions });
+
+    const shouldQueueImmediately =
+      (normalizedSessionId !== null && normalizedSessionId < 0) ||
+      Number(payload?.task_id) < 0;
+    if (shouldQueueImmediately) {
+      if (authUserId === null) {
+        throw new Error('Cannot queue a local session update without an account.');
       }
 
-      const existingSession =
-        sessions.find((item: any) => Number(item.id) === Number(sessionId)) ?? null;
-      const nextSession = applyOfflineSessionUpdate(existingSession, payload);
-      if (!nextSession) {
-        throw nextError;
-      }
-
-      upsertLocalSession(nextSession);
       await enqueueOfflineOperation(authUserId, {
         type: 'updateSession',
         sessionId,
         payload,
       });
       await refreshPendingSyncState();
-      setBackendStatus('offline');
-      setError('Backend offline. Session update saved locally and queued for sync.');
-      return nextSession;
+      setError('Session update saved locally and queued for sync.');
+      return optimisticSession;
+    }
+
+    try {
+      const updatedSession = clearEntitySyncState(
+        await apiUpdateSession(sessionId, payload),
+      );
+      const reconciledSessions = upsertLocalSession(updatedSession, [sessionId]);
+      await persistResolvedState({ sessions: reconciledSessions });
+      setError(null);
+      return updatedSession;
+    } catch (nextError: any) {
+      if (!isRetryableSyncError(nextError) || authUserId === null) {
+        applyResolvedState({ sessions: previousSessions });
+        await persistResolvedState({ sessions: previousSessions });
+        throw nextError;
+      }
+
+      const queuedSession = isOfflineCapableError(nextError)
+        ? optimisticSession
+        : markEntitySyncFailed(optimisticSession, 'updateSession', nextError);
+      const queuedSessions = upsertLocalSession(queuedSession, [sessionId]);
+      await persistResolvedState({ sessions: queuedSessions });
+      await enqueueOfflineOperation(authUserId, {
+        type: 'updateSession',
+        sessionId,
+        payload,
+      });
+      await refreshPendingSyncState();
+      if (isOfflineCapableError(nextError)) {
+        setBackendStatus('offline');
+      }
+      setError('Session update saved locally and queued for sync.');
+      return queuedSession;
     }
   };
 
@@ -1898,10 +2296,7 @@ function AppShell() {
   };
 
   const requestPlannerEdit = (sessionCard: any) => {
-    const canEditOrReschedule =
-      sessionCard.availableActions.includes('edit') ||
-      sessionCard.availableActions.includes('reschedule');
-    if (pendingActionRef.current || !canEditOrReschedule) {
+    if (pendingActionRef.current || !sessionCard.availableActions.includes('edit')) {
       return;
     }
 
@@ -1982,16 +2377,16 @@ function AppShell() {
     objective: string;
     goalContext: string;
   }) => {
-    const selectedTaskId = normalizePositiveId(selectedTask?.id);
-    const requestedTaskId = normalizePositiveId(taskId);
+    const selectedTaskId = normalizeEntityId(selectedTask?.id);
+    const requestedTaskId = normalizeEntityId(taskId);
     const resolvedSelectedTask =
       selectedTaskId !== null
         ? tasks.find(
-            (task: any) => normalizePositiveId(task?.id) === selectedTaskId,
+            (task: any) => normalizeEntityId(task?.id) === selectedTaskId,
           ) ?? selectedTask
         : requestedTaskId !== null
           ? tasks.find(
-              (task: any) => normalizePositiveId(task?.id) === requestedTaskId,
+              (task: any) => normalizeEntityId(task?.id) === requestedTaskId,
             ) ?? null
           : null;
 
@@ -2046,7 +2441,7 @@ function AppShell() {
       throw nextError;
     }
 
-    const createdTaskId = normalizePositiveId(createdTask?.id);
+    const createdTaskId = normalizeEntityId(createdTask?.id);
     logAppInfo('planner task fallback create response', {
       createTaskResponse: createdTask,
       extractedTaskId: createdTaskId,
@@ -2057,20 +2452,6 @@ function AppShell() {
         'Planner task creation returned an invalid response. Check the create-task debug log for the raw payload.',
       );
     }
-
-    setTasks((currentTasks) => {
-      const existingIndex = currentTasks.findIndex(
-        (task: any) => normalizePositiveId(task?.id) === createdTaskId,
-      );
-
-      if (existingIndex >= 0) {
-        return currentTasks.map((task: any, index: number) =>
-          index === existingIndex ? createdTask : task,
-        );
-      }
-
-      return [...currentTasks, createdTask];
-    });
 
     logAppInfo('planner task resolution complete', {
       selectedTask: createdTask,
@@ -2231,7 +2612,6 @@ function AppShell() {
       actionKeyFor('delete', sessionCard.id),
       async () => {
         await deleteSessionWithOffline(sessionCard.id);
-        removeSessionLocally(sessionCard.id);
         await clearSessionReminders(sessionCard.id);
         await refreshAll();
       },
@@ -2362,6 +2742,10 @@ function AppShell() {
         timezone: localTimezone,
         notes: objective || '',
         goal_context: goalContext || null,
+        local_task_title:
+          resolvedSelectedTask?.title ?? String(taskTitle || '').trim(),
+        local_task_category:
+          resolvedSelectedTask?.category ?? String(category || '').trim(),
       };
 
       logAppInfo('planner session create payload', {
@@ -2423,6 +2807,10 @@ function AppShell() {
         timezone: localTimezone,
         notes: objective || '',
         goal_context: goalContext || null,
+        local_task_title:
+          resolvedSelectedTask?.title ?? String(taskTitle || '').trim(),
+        local_task_category:
+          resolvedSelectedTask?.category ?? String(category || '').trim(),
       };
 
       logAppInfo('planner session update payload', {
@@ -2473,7 +2861,11 @@ function AppShell() {
     setApiAuthToken(nextSession?.token);
     await saveStoredAuthSession(nextSession);
     bootSessionKeyRef.current = null;
-    remoteSyncCursorRef.current = 0;
+    snapshotMetaRef.current = {
+      lastSyncedAt: null,
+      lastSeenSyncEventId: 0,
+    };
+    lastPendingSyncEventIdRef.current = 0;
     setAuthSession(nextSession);
     setAuthName(String(nextSession?.user?.name || '').trim());
     setAuthEmail(String(nextSession?.user?.email || '').trim());
@@ -2481,6 +2873,7 @@ function AppShell() {
     setPendingSyncCount(0);
     setLoading(true);
     setError(null);
+    setPlannerStatusMessage(null);
   };
 
   const handleAuthSubmit = async () => {
@@ -2527,17 +2920,26 @@ function AppShell() {
     await clearStoredAuthSession();
     clearApiAuthToken();
     bootSessionKeyRef.current = null;
-    remoteSyncCursorRef.current = 0;
     stopReminderRuntime();
+    snapshotMetaRef.current = {
+      lastSyncedAt: null,
+      lastSeenSyncEventId: 0,
+    };
+    lastPendingSyncEventIdRef.current = 0;
     setAuthSession(null);
-    setTasks([]);
-    setSessions([]);
-    setConfig(fallbackConfig);
-    setGoalSettings(fallbackGoalSettings);
+    applyResolvedState({
+      tasks: [],
+      sessions: [],
+      config: fallbackConfig,
+      goalSettings: fallbackGoalSettings,
+      lastSyncedAt: null,
+      lastSeenSyncEventId: 0,
+    });
     setPendingSyncCount(0);
     setLoading(false);
     setError(null);
     setBackendStatus('checking');
+    setPlannerStatusMessage(null);
   };
 
   const notificationStatusLabel = getNotificationStatusLabel(permissionState);
@@ -2833,6 +3235,7 @@ function AppShell() {
           isActionPending={isActionPending}
           defaultReminderOffsetMinutes={config?.pre_session_minutes ?? 5}
           editRequest={plannerEditRequest}
+          plannerStatusMessage={plannerStatusMessage}
         />
 
         <View style={styles.panel}>
@@ -2845,6 +3248,9 @@ function AppShell() {
             <View key={item.id} style={styles.sessionCard}>
               <Text style={styles.sessionTitle}>{item.title}</Text>
               <Text style={styles.subtle}>{item.status.toUpperCase()}</Text>
+              {item.syncStatusLabel ? (
+                <Text style={styles.subtle}>{item.syncStatusLabel}</Text>
+              ) : null}
               {item.category ? <Text style={styles.categoryTag}>{item.category}</Text> : null}
               <Text style={styles.body}>
                 Objective: {item.objectiveText || item.goal}
@@ -2892,8 +3298,7 @@ function AppShell() {
                     </Text>
                   </Pressable>
                 ) : null}
-                {item.availableActions.includes('edit') ||
-                item.availableActions.includes('reschedule') ? (
+                {item.availableActions.includes('edit') ? (
                   <Pressable
                     disabled={isUiLocked}
                     style={[
@@ -2902,11 +3307,7 @@ function AppShell() {
                     ]}
                     onPress={() => requestPlannerEdit(item)}
                   >
-                    <Text style={styles.secondaryButtonText}>
-                      {item.availableActions.includes('reschedule')
-                        ? 'Reschedule'
-                        : 'Edit'}
-                    </Text>
+                    <Text style={styles.secondaryButtonText}>Edit</Text>
                   </Pressable>
                 ) : null}
                 {item.availableActions.includes('end') ? (

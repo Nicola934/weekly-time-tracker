@@ -7,8 +7,6 @@ from backend.app.notifier import (
     resolve_task_default_goal,
 )
 
-TEST_USER_ID = 1
-
 
 def test_goal_context_service_registers_and_deduplicates_category_goals() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -20,19 +18,16 @@ def test_goal_context_service_registers_and_deduplicates_category_goals() -> Non
             db,
             "Lionyx-E Automation Systems",
             "Generate R300 000 recurring revenue",
-            TEST_USER_ID,
         )
         service.register_goal(
             db,
             "lionyx-e automation systems",
             "Generate R300 000 recurring revenue",
-            TEST_USER_ID,
         )
         response = service.register_goal(
             db,
             "Lionyx-E Automation Systems",
             "Launch Tenant Arrears Tracking system",
-            TEST_USER_ID,
         )
 
     assert response.category_goals == {

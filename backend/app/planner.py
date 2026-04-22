@@ -17,6 +17,30 @@ def _comparable_datetime(value: datetime | None) -> datetime | None:
 
 
 class PlannerService:
+    def _assert_no_overlap(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        start_time: datetime,
+        end_time: datetime,
+        exclude_session_id: int | None = None,
+    ) -> None:
+        statement = select(WorkSession).where(
+            WorkSession.user_id == user_id,
+            WorkSession.planned_start < end_time,
+            WorkSession.planned_end > start_time,
+            WorkSession.status.in_([SessionStatus.planned, SessionStatus.active]),
+        )
+        if exclude_session_id is not None:
+            statement = statement.where(WorkSession.id != exclude_session_id)
+
+        conflicting_session = db.exec(
+            statement.order_by(WorkSession.planned_start)
+        ).first()
+        if conflicting_session:
+            raise ValueError("Session overlaps with an existing scheduled block")
+
     def create_task(self, db: Session, payload: TaskCreate, user_id: int) -> Task:
         task = Task.model_validate(payload)
         task.user_id = user_id
@@ -52,6 +76,12 @@ class PlannerService:
             payload.task_id,
             user_id,
             f"Task not found for id {payload.task_id}",
+        )
+        self._assert_no_overlap(
+            db,
+            user_id=user_id,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
         )
 
         block = ScheduleBlock.model_validate(payload)
@@ -120,6 +150,13 @@ class PlannerService:
                 session.planned_end,
             )
             raise ValueError("Only pending sessions can be rescheduled")
+        self._assert_no_overlap(
+            db,
+            user_id=user_id,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+            exclude_session_id=session.id,
+        )
 
         session.task_id = payload.task_id
         session.planned_start = payload.start_time

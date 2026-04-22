@@ -692,15 +692,6 @@ export async function fetchWeeklyReport(
   });
 }
 
-export async function fetchPendingSyncEvents(baseUrl = DEFAULT_API_BASE_URL) {
-  const payload = await requestJson('/sync/pending', {
-    baseUrl,
-    message: 'Failed to load pending sync events',
-    timeoutMs: DEFAULT_STARTUP_TIMEOUT_MS,
-  });
-  return Array.isArray(payload) ? payload : [];
-}
-
 export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   ensureApiInitLogged(normalizedBaseUrl);
@@ -823,7 +814,7 @@ export async function createTask(payload, baseUrl = DEFAULT_API_BASE_URL) {
 }
 
 export async function createSchedule(payload, baseUrl = DEFAULT_API_BASE_URL) {
-  return requestJson('/schedule', {
+  const response = await requestJson('/schedule', {
     baseUrl,
     message: 'Failed to create schedule block',
     init: {
@@ -832,6 +823,15 @@ export async function createSchedule(payload, baseUrl = DEFAULT_API_BASE_URL) {
       body: JSON.stringify(payload),
     },
   });
+
+  if (response?.session) {
+    return {
+      ...response,
+      session: normalizeSession(response.session),
+    };
+  }
+
+  return response;
 }
 
 export async function startSession(payload, baseUrl = DEFAULT_API_BASE_URL) {
@@ -937,4 +937,23 @@ export async function markSessionMissed(payload, baseUrl = DEFAULT_API_BASE_URL)
       body: JSON.stringify(payload),
     },
   });
+}
+
+export async function fetchPendingSyncEvents(
+  afterEventId = null,
+  baseUrl = DEFAULT_API_BASE_URL,
+) {
+  const params = new URLSearchParams();
+  const normalizedAfterEventId = normalizePositiveId(afterEventId);
+  if (normalizedAfterEventId !== null) {
+    params.set('after_event_id', String(normalizedAfterEventId));
+  }
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  const payload = await requestJson(`/sync/pending${query}`, {
+    baseUrl,
+    message: 'Failed to load pending sync events',
+  });
+
+  return Array.isArray(payload) ? payload : [];
 }

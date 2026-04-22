@@ -231,25 +231,21 @@ test('fetchCurrentUser sends the bearer token after auth is configured', async (
   }
 });
 
-test('fetchPendingSyncEvents returns the remote sync event list', async () => {
+test('fetchPendingSyncEvents includes the last seen event id when polling', async () => {
   const originalFetch = global.fetch;
+  const calls = [];
 
   try {
-    setApiAuthToken('token-123');
-    global.fetch = async () =>
-      createJsonResponse([
-        { id: 11, entity_type: 'session', entity_id: 4, action: 'update' },
-      ]);
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      return createJsonResponse([{ id: 42, entity_type: 'session', action: 'update' }]);
+    };
 
-    const pendingEvents = await fetchPendingSyncEvents(
-      'https://weekly-time-tracker.onrender.com',
-    );
+    const events = await fetchPendingSyncEvents(41, 'http://localhost:8000');
 
-    assert.deepEqual(pendingEvents, [
-      { id: 11, entity_type: 'session', entity_id: 4, action: 'update' },
-    ]);
+    assert.equal(events.length, 1);
+    assert.deepEqual(calls, ['http://localhost:8000/sync/pending?after_event_id=41']);
   } finally {
-    clearApiAuthToken();
     global.fetch = originalFetch;
   }
 });

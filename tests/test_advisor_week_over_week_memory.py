@@ -5,8 +5,6 @@ from sqlmodel import Session, SQLModel, create_engine
 from backend.app.advisor import AdvisorService
 from backend.app.models import Session as WorkSession, SessionStatus, Task, WeeklyProgressMemory
 
-TEST_USER_ID = 1
-
 
 def _memory_db() -> Session:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -24,12 +22,10 @@ def test_advisor_compares_against_previous_week_memory() -> None:
             objective="Advance the backend system",
             long_term_goal="Backend development",
             priority=4,
-            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.add(
             WeeklyProgressMemory(
-                user_id=TEST_USER_ID,
                 week_start=week_start - timedelta(days=7),
                 week_end=week_end - timedelta(days=7),
                 objective_completion_rate=40,
@@ -58,7 +54,6 @@ def test_advisor_compares_against_previous_week_memory() -> None:
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
-                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -73,7 +68,6 @@ def test_advisor_compares_against_previous_week_memory() -> None:
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
-                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -85,7 +79,6 @@ def test_advisor_compares_against_previous_week_memory() -> None:
                     objective_locked=True,
                     quality_score=0,
                     quality_label="failed",
-                    user_id=TEST_USER_ID,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -97,13 +90,12 @@ def test_advisor_compares_against_previous_week_memory() -> None:
                     objective_locked=True,
                     quality_score=0,
                     quality_label="failed",
-                    user_id=TEST_USER_ID,
                 ),
             ]
         )
         db.commit()
 
-        advisory = AdvisorService().generate(db, week_start, week_end, TEST_USER_ID)
+        advisory = AdvisorService().generate(db, week_start, week_end)
 
     assert any(
         note == "You improved completion rate from 40% to 50%."

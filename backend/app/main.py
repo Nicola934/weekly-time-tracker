@@ -12,9 +12,9 @@ from sqlmodel import Session
 from .auth import get_user_for_token, login_user, register_user
 from .behavior import BehaviorService
 from .database import create_db_and_tables, get_session
-from .models import Session as WorkSession, Task, UserAccount
+from .models import Session as WorkSession, SessionStatus, Task, UserAccount
 from .notifier import GoalContextService, NotificationConfigService, resolve_task_category
-from .ownership import get_owned_record
+from .ownership import get_owned_record, require_owned_record
 from .planner import PlannerService
 from .reporting import ReportingService
 from .schemas import (
@@ -198,6 +198,7 @@ def create_schedule(
     sync_service.enqueue(db, "session", planned_session.id, "create", user.id)
     response = block.model_dump()
     response["session_id"] = planned_session.id
+    response["session"] = planned_session
     return response
 
 
@@ -333,13 +334,21 @@ def missed_session(
     except ValueError as exc:
         raise _http_error_from_value_error(exc) from exc
 
-    session = get_owned_record(db, WorkSession, payload.session_id, user.id)
-    task = get_owned_record(db, Task, session.task_id, user.id) if session else None
+    session = require_owned_record(
+        db,
+        WorkSession,
+        payload.session_id,
+        user.id,
+        f"Session not found for id {payload.session_id}",
+    )
+    if session.status != SessionStatus.missed:
+        session.status = SessionStatus.missed
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+
     sync_service.enqueue(db, "habit", item.id, "missed", user.id)
-    return {
-        "habit": item,
-        "prompt": behavior.missed_session_prompt(session, task) if session else None,
-    }
+    return session
 
 
 @app.get("/habits")
@@ -389,10 +398,11 @@ def update_goal_context_settings(
 
 @app.get("/sync/pending")
 def get_pending_sync(
+    after_event_id: int | None = None,
     db: Session = Depends(get_session),
     user: UserAccount = Depends(get_current_user),
 ):
-    return sync_service.pending_events(db, user.id)
+    return sync_service.pending_events(db, user.id, after_event_id)
 
 
 @app.get("/reports/weekly/json")

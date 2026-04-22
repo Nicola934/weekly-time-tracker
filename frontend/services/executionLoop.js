@@ -299,7 +299,7 @@ function getControlState(session, now = new Date()) {
   return 'current';
 }
 
-function getAvailableActions({ session, now = new Date() }) {
+function getAvailableActions({ session, hasActiveSession = false, now = new Date() }) {
   const controlState = getControlState(session, now);
   if (controlState === 'active') {
     return ['end'];
@@ -316,13 +316,17 @@ function getAvailableActions({ session, now = new Date() }) {
 
   if (isFutureSession) {
     const actions = ['edit', 'delete'];
-    if (canStartFromWindow) {
+    if (canStartFromWindow && !hasActiveSession) {
       actions.unshift('start');
     }
     return actions;
   }
 
-  return ['start', 'missed', 'reschedule'];
+  if (!hasActiveSession) {
+    return ['start', 'missed'];
+  }
+
+  return [];
 }
 
 export function getSessionActions(sessionOrStatus, options = {}) {
@@ -347,6 +351,9 @@ export function buildSessionCards({
   categoryGoals = {},
 }) {
   const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const hasActiveSession = sessions.some(
+    (session) => (session.status ?? 'planned').toLowerCase() === 'active',
+  );
 
   return sessions.map((session) => {
     const plannedStartRaw = session.planned_start ?? session.plannedStart;
@@ -364,13 +371,20 @@ export function buildSessionCards({
       session.objective_completed ?? session.objectiveCompleted,
     );
     const task = taskMap.get(taskId);
-    const category = getTaskCategoryLabel(task);
+    const category =
+      getTaskCategoryLabel(task) ||
+      normalizeTextValue(session.local_task_category ?? session.localTaskCategory) ||
+      'Uncategorized';
     const goalContext =
       normalizeTextValue(session.goal_context ?? session.goalContext) ??
       getTaskGoalContext(task) ??
       findCategoryGoals(categoryGoals, category)[0] ??
       null;
-    const status = (session.status ?? 'planned').toLowerCase();
+    const localDeleted =
+      session.local_deleted === true || session.localDeleted === true;
+    const status = localDeleted
+      ? 'cancelled'
+      : (session.status ?? 'planned').toLowerCase();
     const objectiveText =
       normalizeTextValue(session.objective ?? session.objectiveText) ??
       normalizeTextValue(status === 'planned' ? session.output_notes : null) ??
@@ -390,7 +404,7 @@ export function buildSessionCards({
         plannedStart: plannedStartRaw,
         plannedEnd: plannedEndRaw,
       },
-      { now },
+      { hasActiveSession, now },
     );
     const actualEnd = actualEndRaw ? new Date(actualEndRaw) : null;
     const controlState = getControlState(
@@ -429,15 +443,33 @@ export function buildSessionCards({
     const hasLockedOutcome =
       session.objective_locked === true ||
       status === 'completed' ||
+      status === 'cancelled' ||
       status === 'missed' ||
       Boolean(actualEndRaw);
+    const syncState =
+      normalizeTextValue(session.sync_state ?? session.syncState) ?? 'synced';
+    const pendingOperationTypes = Array.isArray(
+      session.pending_operation_types ?? session.pendingOperationTypes,
+    )
+      ? [...(session.pending_operation_types ?? session.pendingOperationTypes)]
+      : [];
+    const syncError =
+      normalizeTextValue(session.sync_error ?? session.syncError) ?? null;
+    const syncStatusLabel =
+      syncState === 'sync_failed'
+        ? syncError || 'Sync failed. Changes will retry on the next refresh.'
+        : syncState === 'pending_sync'
+          ? 'Pending sync'
+          : null;
     const timingStatusLabel = actualStart
       ? formatPunctualityLabel(startDeltaMinutes)
+      : status === 'cancelled'
+        ? 'Pending cancellation'
       : status === 'missed'
         ? 'Missed'
         : isWithinStartWindow(plannedStart, plannedEnd, now)
           ? 'Start window open'
-        : controlState === 'future'
+          : controlState === 'future'
           ? 'Scheduled'
           : 'Locked for review';
 
@@ -445,7 +477,10 @@ export function buildSessionCards({
       id: session.id,
       taskId,
       scheduleBlockId: session.schedule_block_id ?? session.scheduleBlockId ?? null,
-      title: task?.title ?? `Task ${taskId}`,
+      title:
+        task?.title ??
+        normalizeTextValue(session.local_task_title ?? session.localTaskTitle) ??
+        `Task ${taskId}`,
       category,
       goalContext,
       goal: objectiveText ?? 'Execution block',
@@ -495,6 +530,10 @@ export function buildSessionCards({
             : 'Objective not completed.'),
       controlState,
       availableActions: actionState.availableActions,
+      syncState,
+      syncStatusLabel,
+      syncError,
+      pendingOperationTypes,
     };
   });
 }

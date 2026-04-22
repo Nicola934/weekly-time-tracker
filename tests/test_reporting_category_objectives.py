@@ -5,8 +5,6 @@ from sqlmodel import Session, SQLModel, create_engine
 from backend.app.models import Session as WorkSession, SessionStatus, Task
 from backend.app.reporting import ReportingService
 
-TEST_USER_ID = 1
-
 
 def test_category_objective_progress_is_scoped_to_each_day() -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -21,7 +19,6 @@ def test_category_objective_progress_is_scoped_to_each_day() -> None:
             objective="Ship the reporting fix",
             long_term_goal="Reporting",
             priority=4,
-            user_id=TEST_USER_ID,
         )
         db.add(task)
         db.commit()
@@ -38,7 +35,6 @@ def test_category_objective_progress_is_scoped_to_each_day() -> None:
                 objective="Patch the report",
                 objective_completed=True,
                 completion_percent=100,
-                user_id=TEST_USER_ID,
             ),
             WorkSession(
                 task_id=task.id,
@@ -50,7 +46,6 @@ def test_category_objective_progress_is_scoped_to_each_day() -> None:
                 objective="Review the result",
                 objective_completed=False,
                 completion_percent=40,
-                user_id=TEST_USER_ID,
             ),
             WorkSession(
                 task_id=task.id,
@@ -62,7 +57,6 @@ def test_category_objective_progress_is_scoped_to_each_day() -> None:
                 objective="Validate the edge case",
                 objective_completed=True,
                 completion_percent=100,
-                user_id=TEST_USER_ID,
             ),
             WorkSession(
                 task_id=task.id,
@@ -74,13 +68,12 @@ def test_category_objective_progress_is_scoped_to_each_day() -> None:
                 objective="Check another case",
                 objective_completed=False,
                 completion_percent=25,
-                user_id=TEST_USER_ID,
             ),
         ]
         db.add_all(sessions)
         db.commit()
 
-        report = ReportingService().weekly_report(db, week_start, week_end, TEST_USER_ID)
+        report = ReportingService().weekly_report(db, week_start, week_end)
 
     assert len(report.category_objectives) == 1
 
