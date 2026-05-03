@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from .notifier import GoalContextService, NotificationConfigService, resolve_tas
 from .ownership import get_owned_record, require_owned_record
 from .planner import PlannerService
 from .reporting import ReportingService
+from .serialization import serialize_schedule_block, serialize_session, serialize_task
 from .schemas import (
     AuthSessionResponse,
     GoalContextSettingsResponse,
@@ -161,19 +163,19 @@ def create_task(
     payload: TaskCreate,
     db: Session = Depends(get_session),
     user: UserAccount = Depends(get_current_user),
-) -> Task:
+) -> dict[str, Any]:
     task = planner.create_task(db, payload, user.id)
     goal_context.register_goal(db, resolve_task_category(task), task.long_term_goal, user.id)
     sync_service.enqueue(db, "task", task.id, "create", user.id)
-    return task
+    return serialize_task(task)
 
 
 @app.get("/tasks")
 def list_tasks(
     db: Session = Depends(get_session),
     user: UserAccount = Depends(get_current_user),
-) -> list[Task]:
-    return planner.list_tasks(db, user.id)
+) -> list[dict[str, Any]]:
+    return [serialize_task(task) for task in planner.list_tasks(db, user.id)]
 
 
 @app.post("/schedule")
@@ -196,9 +198,9 @@ def create_schedule(
     )
     sync_service.enqueue(db, "schedule", block.id, "create", user.id)
     sync_service.enqueue(db, "session", planned_session.id, "create", user.id)
-    response = block.model_dump()
+    response = serialize_schedule_block(block)
     response["session_id"] = planned_session.id
-    response["session"] = planned_session
+    response["session"] = serialize_session(planned_session)
     return response
 
 
@@ -215,7 +217,7 @@ def list_sessions(
     db: Session = Depends(get_session),
     user: UserAccount = Depends(get_current_user),
 ):
-    return tracker.list_sessions(db, user.id)
+    return [serialize_session(session) for session in tracker.list_sessions(db, user.id)]
 
 
 def _delete_session_response(
@@ -290,7 +292,7 @@ def update_session(
         session.id,
         session.schedule_block_id,
     )
-    return session
+    return serialize_session(session)
 
 
 @app.post("/sessions/start")
@@ -305,7 +307,7 @@ def start_session(
         raise _http_error_from_value_error(exc) from exc
 
     sync_service.enqueue(db, "session", session.id, "start", user.id)
-    return session
+    return serialize_session(session)
 
 
 @app.post("/sessions/end")
@@ -320,7 +322,7 @@ def end_session(
         raise _http_error_from_value_error(exc) from exc
 
     sync_service.enqueue(db, "session", session.id, "end", user.id)
-    return session
+    return serialize_session(session)
 
 
 @app.post("/sessions/missed")
@@ -348,7 +350,7 @@ def missed_session(
         db.refresh(session)
 
     sync_service.enqueue(db, "habit", item.id, "missed", user.id)
-    return session
+    return serialize_session(session)
 
 
 @app.get("/habits")
