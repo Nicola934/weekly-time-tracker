@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from backend.app.models import MissedHabit, Session as WorkSession, SessionFailureReason, SessionStatus, Task
+from backend.app.models import MissedHabit, Session as WorkSession, SessionFailureReason, SessionStatus, Task, UserAccount
 from backend.app.schemas import SessionEndRequest
 from backend.app.tracker import TrackerService
 
@@ -14,13 +14,28 @@ def _memory_db() -> Session:
     return Session(engine)
 
 
+def _create_user(db: Session, email: str) -> UserAccount:
+    user = UserAccount(
+        name="Operator",
+        email=email,
+        password_hash="hash",
+        password_salt="salt",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> None:
     with _memory_db() as db:
+        user = _create_user(db, "tracker-end@example.com")
         task = Task(
             title="Execution Block",
             objective="Finish the API pass",
             long_term_goal="Backend",
             priority=4,
+            user_id=user.id,
         )
         db.add(task)
         db.commit()
@@ -33,6 +48,7 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
             actual_start=datetime(2026, 3, 26, 10, 0, 0),
             status=SessionStatus.active,
             objective="Finish the API pass",
+            user_id=user.id,
         )
         db.add(session)
         db.commit()
@@ -49,6 +65,7 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
                     objective_completed=False,
                     completion_percent=0,
                 ),
+                user.id,
             )
 
         ended = service.end_session(
@@ -61,6 +78,7 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
                 reflection_notes="Handled two endpoints but left validation open.",
                 failure_reason=SessionFailureReason.underestimated_effort,
             ),
+            user.id,
         )
 
         assert ended.status == SessionStatus.completed
@@ -75,11 +93,13 @@ def test_end_session_requires_explicit_failure_reason_and_locks_objective() -> N
 
 def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
     with _memory_db() as db:
+        user = _create_user(db, "tracker-overdue@example.com")
         task = Task(
             title="System Block",
             objective="Ship backend fixes",
             long_term_goal="Backend",
             priority=4,
+            user_id=user.id,
         )
         db.add(task)
         db.commit()
@@ -91,6 +111,7 @@ def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
             planned_end=datetime(2026, 3, 24, 15, 0, 0),
             status=SessionStatus.planned,
             objective="Ship backend fixes",
+            user_id=user.id,
         )
         db.add(overdue)
         db.commit()
@@ -98,6 +119,7 @@ def test_overdue_planned_sessions_are_auto_logged_as_missed() -> None:
 
         updated = TrackerService().sync_overdue_sessions(
             db,
+            user.id,
             datetime(2026, 3, 24, 15, 30, 0),
         )
 

@@ -1,6 +1,6 @@
 from sqlmodel import Session, SQLModel, create_engine
 
-from backend.app.models import Task
+from backend.app.models import Task, UserAccount
 from backend.app.notifier import (
     GoalContextService,
     resolve_task_category,
@@ -13,21 +13,33 @@ def test_goal_context_service_registers_and_deduplicates_category_goals() -> Non
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as db:
+        user = UserAccount(
+            name="Operator",
+            email="goal-context@example.com",
+            password_hash="hash",
+            password_salt="salt",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
         service = GoalContextService()
         service.register_goal(
             db,
             "Lionyx-E Automation Systems",
             "Generate R300 000 recurring revenue",
+            user.id,
         )
         service.register_goal(
             db,
             "lionyx-e automation systems",
             "Generate R300 000 recurring revenue",
+            user.id,
         )
         response = service.register_goal(
             db,
             "Lionyx-E Automation Systems",
             "Launch Tenant Arrears Tracking system",
+            user.id,
         )
 
     assert response.category_goals == {

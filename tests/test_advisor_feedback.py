@@ -9,6 +9,7 @@ from backend.app.models import (
     Session as WorkSession,
     SessionStatus,
     Task,
+    UserAccount,
 )
 
 
@@ -18,16 +19,31 @@ def _memory_db() -> Session:
     return Session(engine)
 
 
+def _create_user(db: Session, email: str) -> UserAccount:
+    user = UserAccount(
+        name="Operator",
+        email=email,
+        password_hash="hash",
+        password_salt="salt",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def test_advisor_feedback_uses_direct_breakdown_language() -> None:
     period_start = datetime(2026, 3, 23, 0, 0, 0)
     period_end = datetime(2026, 3, 29, 23, 59, 59)
 
     with _memory_db() as db:
+        user = _create_user(db, "advisor-breakdown@example.com")
         task = Task(
             title="System",
             objective="Improve system architecture",
             long_term_goal="System Development",
             priority=5,
+            user_id=user.id,
         )
         db.add(task)
         db.commit()
@@ -39,12 +55,14 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
                 planned_start=datetime(2026, 3, 24, 14, 0, 0),
                 planned_end=datetime(2026, 3, 24, 15, 0, 0),
                 status=SessionStatus.missed,
+                user_id=user.id,
             ),
             WorkSession(
                 task_id=task.id,
                 planned_start=datetime(2026, 3, 25, 15, 0, 0),
                 planned_end=datetime(2026, 3, 25, 16, 0, 0),
                 status=SessionStatus.missed,
+                user_id=user.id,
             ),
         ]
         partial_session = WorkSession(
@@ -55,6 +73,7 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
             actual_end=datetime(2026, 3, 26, 15, 0, 0),
             status=SessionStatus.completed,
             completion_percent=50,
+            user_id=user.id,
         )
         db.add_all([*missed_sessions, partial_session])
         db.commit()
@@ -67,11 +86,12 @@ def test_advisor_feedback_uses_direct_breakdown_language() -> None:
                     reason_category=MissedReasonCategory.social_media,
                     captured_at=item.planned_end,
                     time_lost_minutes=45,
+                    user_id=user.id,
                 )
             )
         db.commit()
 
-        feedback = AdvisorService().generate(db, period_start, period_end).weekly_feedback
+        feedback = AdvisorService().generate(db, period_start, period_end, user.id).weekly_feedback
 
         assert "A recurring pattern shows" not in feedback.patterns
         assert "It suggests that" not in feedback.narrative
@@ -97,11 +117,13 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
     period_end = datetime(2026, 3, 29, 23, 59, 59)
 
     with _memory_db() as db:
+        user = _create_user(db, "advisor-strong@example.com")
         task = Task(
             title="Sales",
             objective="Sell to property management companies",
             long_term_goal="Business Development",
             priority=4,
+            user_id=user.id,
         )
         db.add(task)
         db.commit()
@@ -118,6 +140,7 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
                     status=SessionStatus.completed,
                     completion_percent=100,
                     objective_completed=True,
+                    user_id=user.id,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -128,12 +151,13 @@ def test_advisor_feedback_reinforces_strong_execution_without_generic_language()
                     status=SessionStatus.completed,
                     completion_percent=100,
                     objective_completed=True,
+                    user_id=user.id,
                 ),
             ]
         )
         db.commit()
 
-        feedback = AdvisorService().generate(db, period_start, period_end).weekly_feedback
+        feedback = AdvisorService().generate(db, period_start, period_end, user.id).weekly_feedback
 
         assert feedback.wins.startswith("You executed with control this week.")
         assert feedback.patterns == (

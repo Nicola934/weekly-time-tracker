@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from backend.app.models import Session as WorkSession, SessionFailureReason, SessionStatus, Task
+from backend.app.models import Session as WorkSession, SessionFailureReason, SessionStatus, Task, UserAccount
 from backend.app.reporting import ReportingService
 
 
@@ -17,11 +17,22 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
     period_end = week_start + timedelta(days=2, hours=23, minutes=59, seconds=59)
 
     with _memory_db() as db:
+        user = UserAccount(
+            name="Operator",
+            email="reporting-execution@example.com",
+            password_hash="hash",
+            password_salt="salt",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
         task = Task(
             title="Backend Execution",
             objective="Ship the tracker changes",
             long_term_goal="Backend",
             priority=4,
+            user_id=user.id,
         )
         db.add(task)
         db.commit()
@@ -44,6 +55,7 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     failure_reason=SessionFailureReason.distraction,
                     distraction_category="Social media",
                     quality_score=60,
+                    user_id=user.id,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -58,6 +70,7 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
+                    user_id=user.id,
                 ),
                 WorkSession(
                     task_id=task.id,
@@ -72,12 +85,13 @@ def test_weekly_report_surfaces_reflection_summary_streaks_and_timeline() -> Non
                     completion_percent=100,
                     quality_score=100,
                     quality_label="strong",
+                    user_id=user.id,
                 ),
             ]
         )
         db.commit()
 
-        report = ReportingService().weekly_report(db, week_start, period_end)
+        report = ReportingService().weekly_report(db, week_start, period_end, user.id)
 
     assert report.reflection_summary.top_failure_reason == "Distraction"
     assert report.reflection_summary.top_failure_reason_count == 1
