@@ -1061,18 +1061,26 @@ function AppShell() {
 
     const cachedSnapshot = await loadOfflineSnapshot(authUserId);
     let queuedOperations = await loadOfflineQueue(authUserId);
-    let workingSnapshot = mergeOfflineSnapshot(
-      cachedSnapshot,
-      {
-        tasks: tasksRef.current,
-        sessions: sessionsRef.current,
-        config: configRef.current,
-        goalSettings: goalSettingsRef.current,
-        lastSyncedAt: snapshotMetaRef.current.lastSyncedAt,
-        lastSeenSyncEventId: snapshotMetaRef.current.lastSeenSyncEventId,
-      },
-      queuedOperations,
-    );
+    const currentStateSnapshot = {
+      tasks: tasksRef.current,
+      sessions: sessionsRef.current,
+      config: configRef.current,
+      goalSettings: goalSettingsRef.current,
+      lastSyncedAt: snapshotMetaRef.current.lastSyncedAt,
+      lastSeenSyncEventId: snapshotMetaRef.current.lastSeenSyncEventId,
+    };
+    const hasInMemoryPlannerState =
+      currentStateSnapshot.tasks.length > 0 ||
+      currentStateSnapshot.sessions.length > 0 ||
+      Boolean(currentStateSnapshot.config) ||
+      Boolean(currentStateSnapshot.goalSettings);
+    let workingSnapshot = hasInMemoryPlannerState
+      ? mergeOfflineSnapshot(
+          cachedSnapshot,
+          currentStateSnapshot,
+          queuedOperations,
+        )
+      : cachedSnapshot;
     const hasCachedData =
       (Array.isArray(cachedSnapshot?.tasks) && cachedSnapshot.tasks.length > 0) ||
       (Array.isArray(cachedSnapshot?.sessions) && cachedSnapshot.sessions.length > 0) ||
