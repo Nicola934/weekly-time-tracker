@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-verified/
 .expo/
 latest-release.apk
 export-android-check/
