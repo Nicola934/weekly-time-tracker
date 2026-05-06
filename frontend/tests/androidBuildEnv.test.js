@@ -26,6 +26,6 @@ test('apk build profile pins the production backend url', () => {
 test('android release metadata advances past the broken v1 apk', () => {
   const appConfig = readJson('app.json');
 
-  assert.equal(appConfig?.expo?.version, '0.2.1');
-  assert.equal(appConfig?.expo?.android?.versionCode, 3);
+  assert.equal(appConfig?.expo?.version, '0.2.4');
+  assert.equal(appConfig?.expo?.android?.versionCode, 6);
 });
