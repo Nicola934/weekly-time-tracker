@@ -1,4 +1,5 @@
-const LOCAL_API_BASE_URL = 'http://localhost:8000';
+const LOCAL_API_BASE_URL =
+  process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8000';
 const RUNTIME_CONFIG_WINDOW_KEY = '__LIONYX_E_RUNTIME_CONFIG__';
 
 function normalizeBaseUrl(value) {
@@ -40,9 +41,17 @@ export function resolveApiRuntimeConfig() {
     };
   }
 
+  const localApiBaseUrl = normalizeBaseUrl(LOCAL_API_BASE_URL);
+  if (localApiBaseUrl) {
+    return {
+      apiBaseUrl: localApiBaseUrl,
+      source: 'local-default',
+    };
+  }
+
   return {
-    apiBaseUrl: LOCAL_API_BASE_URL,
-    source: 'local-default',
+    apiBaseUrl: '',
+    source: 'unconfigured',
   };
 }
 
