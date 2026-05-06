@@ -1071,9 +1071,7 @@ function AppShell() {
     };
     const hasInMemoryPlannerState =
       currentStateSnapshot.tasks.length > 0 ||
-      currentStateSnapshot.sessions.length > 0 ||
-      Boolean(currentStateSnapshot.config) ||
-      Boolean(currentStateSnapshot.goalSettings);
+      currentStateSnapshot.sessions.length > 0;
     let workingSnapshot = hasInMemoryPlannerState
       ? mergeOfflineSnapshot(
           cachedSnapshot,
